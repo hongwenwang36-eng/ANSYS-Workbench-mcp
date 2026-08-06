@@ -25,7 +25,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 SERVER_ROOT = Path(__file__).resolve().parent
 DEFAULT_MCP_HOME = SERVER_ROOT
@@ -39,6 +39,13 @@ STATUS_FILE = MCP_HOME / "status.json"
 STOP_FILE = MCP_HOME / "stop.flag"
 LOG_FILE = MCP_HOME / "mcp.log"
 BRIDGE_JOURNAL = SERVER_ROOT / "ansys_workbench_bridge.wbjn"
+ICEM_HOME = MCP_HOME / "icem"
+ICEM_COMMANDS_DIR = ICEM_HOME / "commands"
+ICEM_RESULTS_DIR = ICEM_HOME / "results"
+ICEM_SCRIPTS_DIR = ICEM_HOME / "scripts"
+ICEM_STATUS_FILE = ICEM_HOME / "status.json"
+ICEM_LOG_FILE = ICEM_HOME / "icem_bridge.log"
+ICEM_BRIDGE_SCRIPT = SERVER_ROOT / "icem_cfd_bridge.tcl"
 
 DEFAULT_RUNWB2 = r"D:\Program Files\ANSYS Inc\v251\Framework\bin\Win64\RunWB2.exe"
 DEFAULT_MECHANICAL = r"D:\Program Files\ANSYS Inc\v251\aisol\bin\winx64\AnsysWBU.exe"
@@ -46,6 +53,7 @@ DEFAULT_MAPDL = r"D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe"
 DEFAULT_FLUENT = r"D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe"
 DEFAULT_CFX_SOLVE = r"D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe"
 DEFAULT_CFX_PRE = r"D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe"
+DEFAULT_ICEM_CFD = r"D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat"
 
 RUNWB2 = Path(os.environ.get("ANSYS_RUNWB2", DEFAULT_RUNWB2))
 MECHANICAL = Path(os.environ.get("ANSYS_MECHANICAL", DEFAULT_MECHANICAL))
@@ -53,6 +61,7 @@ MAPDL = Path(os.environ.get("ANSYS_MAPDL", DEFAULT_MAPDL))
 FLUENT = Path(os.environ.get("ANSYS_FLUENT", DEFAULT_FLUENT))
 CFX_SOLVE = Path(os.environ.get("ANSYS_CFX_SOLVE", DEFAULT_CFX_SOLVE))
 CFX_PRE = Path(os.environ.get("ANSYS_CFX_PRE", DEFAULT_CFX_PRE))
+ICEM_CFD = Path(os.environ.get("ANSYS_ICEM_CFD", DEFAULT_ICEM_CFD))
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -86,7 +95,15 @@ mcp = FastMCP("ansys-workbench-mcp")
 
 
 def _ensure_dirs() -> None:
-    for path in [COMMANDS_DIR, RESULTS_DIR, SCRIPTS_DIR, RUNS_DIR]:
+    for path in [
+        COMMANDS_DIR,
+        RESULTS_DIR,
+        SCRIPTS_DIR,
+        RUNS_DIR,
+        ICEM_COMMANDS_DIR,
+        ICEM_RESULTS_DIR,
+        ICEM_SCRIPTS_DIR,
+    ]:
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -102,6 +119,43 @@ def _split_extra_args(extra_args: str) -> list[str]:
     if not extra_args.strip():
         return []
     return shlex.split(extra_args, posix=False)
+
+
+def _tcl_quote(value: str | Path) -> str:
+    """Return a Tcl double-quoted literal without allowing substitutions."""
+    text = str(value).replace("\\", "/")
+    replacements = {
+        "\\": "\\\\",
+        '"': '\\"',
+        "$": "\\$",
+        "[": "\\[",
+        "]": "\\]",
+        "\r": "\\r",
+        "\n": "\\n",
+        "\t": "\\t",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return f'"{text}"'
+
+
+def _icem_command(arguments: list[str]) -> str:
+    """Build a Windows command line for the ICEM CFD batch launcher."""
+    comspec = os.environ.get("COMSPEC", "cmd.exe")
+
+    def quote_for_cmd(value: str | Path) -> str:
+        text = str(value)
+        if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+        if '"' in text or "\r" in text or "\n" in text:
+            raise ValueError("ICEM command arguments cannot contain quotes or newlines")
+        # CALL performs another percent-expansion pass; double percent signs so
+        # paths and arguments are passed literally. Quoting protects cmd.exe
+        # metacharacters such as &, |, <, >, and ^.
+        return f'"{text.replace("%", "%%")}"'
+
+    launcher = " ".join(quote_for_cmd(value) for value in [ICEM_CFD, *arguments])
+    return f"{quote_for_cmd(comspec)} /d /v:off /c call {launcher}"
 
 
 def _analysis_key(value: str) -> str:
@@ -137,7 +191,7 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _run_process(args: list[str], cwd: Path, timeout_seconds: int) -> dict[str, Any]:
+def _run_process(args: list[str] | str, cwd: Path, timeout_seconds: int) -> dict[str, Any]:
     started = time.time()
     proc = subprocess.run(
         args,
@@ -193,6 +247,101 @@ def _send_command(cmd_type: str, timeout: float = DEFAULT_TIMEOUT, **kwargs: Any
     return {"success": False, "error": f"Timeout: no response from Workbench bridge in {timeout}s"}
 
 
+def _read_icem_status() -> dict[str, Any]:
+    return _read_json(ICEM_STATUS_FILE)
+
+
+def _send_icem_command(
+    command_type: str,
+    timeout: float = DEFAULT_TIMEOUT,
+    script: str = "",
+) -> dict[str, Any]:
+    """Send a Tcl command to the persistent ICEM CFD bridge."""
+    _ensure_dirs()
+    command_id = uuid.uuid4().hex[:8]
+    command_path = ICEM_COMMANDS_DIR / f"cmd_{command_id}.tcl"
+    result_path = ICEM_RESULTS_DIR / f"{command_id}.json"
+    script_path = ICEM_SCRIPTS_DIR / f"script_{command_id}.tcl"
+
+    if command_type == "execute":
+        script_path.write_text(script, encoding="utf-8")
+
+    descriptor = "\n".join(
+        [
+            f"set command_id {_tcl_quote(command_id)}",
+            f"set command_type {_tcl_quote(command_type)}",
+            f"set script_file {_tcl_quote(script_path if command_type == 'execute' else '')}",
+            f"set result_file {_tcl_quote(result_path)}",
+            "",
+        ]
+    )
+    command_path.write_text(descriptor, encoding="utf-8")
+
+    deadline = time.time() + float(timeout)
+    while time.time() < deadline:
+        if result_path.exists():
+            result = _read_json(result_path)
+            for path in [result_path, script_path]:
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
+            if result:
+                return result
+            return {
+                "success": False,
+                "error": f"ICEM bridge returned an invalid result file: {result_path}",
+            }
+        time.sleep(0.05)
+
+    for path in [command_path, script_path]:
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+    return {"success": False, "error": f"Timeout: no response from ICEM CFD bridge in {timeout}s"}
+
+
+def _format_icem_result(result: dict[str, Any]) -> str:
+    if result.get("success"):
+        return _json(
+            {
+                "ok": True,
+                "command_id": result.get("id", ""),
+                "elapsed_seconds": result.get("elapsed_seconds", 0),
+                "result": result.get("result", ""),
+            }
+        )
+    return _json(
+        {
+            "ok": False,
+            "command_id": result.get("id", ""),
+            "error": result.get("error", "Unknown ICEM CFD bridge error"),
+            "traceback": result.get("traceback", ""),
+        }
+    )
+
+
+def _read_tail(path: Path, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except OSError:
+        return ""
+
+
+def _clear_stale_icem_commands() -> None:
+    """Remove only MCP-generated command descriptors from an earlier bridge."""
+    for path in ICEM_COMMANDS_DIR.glob("cmd_*.tcl"):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def _format_bridge_result(result: dict[str, Any]) -> str:
     if result.get("success"):
         data = result.get("data")
@@ -235,9 +384,24 @@ def installation_resource() -> str:
     return check_ansys_installation()
 
 
+@mcp.resource("ansys-workbench://icem/status")
+def icem_status_resource() -> str:
+    """Current persistent ICEM CFD bridge status."""
+    status = _read_icem_status()
+    if not status:
+        return _json(
+            {
+                "connected": False,
+                "detail": "ICEM CFD status.json not found",
+                "icem_mcp_home": str(ICEM_HOME),
+            }
+        )
+    return _json(status)
+
+
 @mcp.tool()
 def check_ansys_installation() -> str:
-    """Check configured Workbench, Mechanical, MAPDL, and bridge paths."""
+    """Check configured Workbench, Mechanical, MAPDL, CFD, and bridge paths."""
     data = {
         "version": __version__,
         "runwb2": str(RUNWB2),
@@ -252,6 +416,11 @@ def check_ansys_installation() -> str:
         "cfx_solve_exists": CFX_SOLVE.exists(),
         "cfx_pre": str(CFX_PRE),
         "cfx_pre_exists": CFX_PRE.exists(),
+        "icem_cfd": str(ICEM_CFD),
+        "icem_cfd_exists": ICEM_CFD.exists(),
+        "icem_bridge_script": str(ICEM_BRIDGE_SCRIPT),
+        "icem_bridge_script_exists": ICEM_BRIDGE_SCRIPT.exists(),
+        "icem_mcp_home": str(ICEM_HOME),
         "bridge_journal": str(BRIDGE_JOURNAL),
         "bridge_journal_exists": BRIDGE_JOURNAL.exists(),
         "mcp_home": str(MCP_HOME),
@@ -261,323 +430,103 @@ def check_ansys_installation() -> str:
 
 
 @mcp.tool()
-def start_workbench_bridge(batch: bool = True, wait_seconds: int = 20) -> str:
-    """Launch Workbench with the file-IPC bridge journal loaded.
+def check_icem_installation() -> str:
+    """Check the configured ICEM CFD launcher and persistent bridge script."""
+    return _json(
+        {
+            "version": __version__,
+            "icem_cfd": str(ICEM_CFD),
+            "icem_cfd_exists": ICEM_CFD.exists(),
+            "bridge_script": str(ICEM_BRIDGE_SCRIPT),
+            "bridge_script_exists": ICEM_BRIDGE_SCRIPT.exists(),
+            "icem_mcp_home": str(ICEM_HOME),
+        }
+    )
 
-    The bridge journal keeps Workbench alive and polls commands/*.json.
-    Use stop_workbench_bridge to stop it.
+
+@mcp.tool()
+def start_icem_bridge(
+    project_file: str = "",
+    workdir: str = "",
+    batch: bool = False,
+    wait_seconds: int = 30,
+    extra_args: str = "",
+) -> str:
+    """Launch ICEM CFD with a persistent MCP Tcl bridge.
+
+    By default ICEM starts with its GUI. Set batch=True for a headless,
+    persistent ICEM session. project_file is passed to ICEM at startup.
     """
-    if not RUNWB2.exists():
-        return _json({"ok": False, "error": f"RunWB2 not found: {RUNWB2}"})
-    if not BRIDGE_JOURNAL.exists():
-        return _json({"ok": False, "error": f"Bridge journal not found: {BRIDGE_JOURNAL}"})
+    if not ICEM_CFD.exists():
+        return _json({"ok": False, "error": f"ICEM CFD launcher not found: {ICEM_CFD}"})
+    if not ICEM_BRIDGE_SCRIPT.exists():
+        return _json({"ok": False, "error": f"ICEM CFD bridge script not found: {ICEM_BRIDGE_SCRIPT}"})
 
-    status = _read_status()
+    status = _read_icem_status()
     if status.get("status") == "running":
-        ping_result = _send_command("ping", timeout=5.0)
+        ping_result = _send_icem_command("ping", timeout=5.0)
         if ping_result.get("success"):
-            return _json({"ok": True, "already_running": True, "status": status, "ping": ping_result})
+            return _json(
+                {
+                    "ok": True,
+                    "already_running": True,
+                    "status": status,
+                    "ping": ping_result,
+                }
+            )
 
+    startup_project = ""
+    if project_file:
+        project = _as_path(project_file)
+        if not project.exists():
+            return _json({"ok": False, "error": f"ICEM project/input file not found: {project}"})
+        startup_project = str(project)
+
+    cwd = _as_path(workdir) if workdir else RUNS_DIR / "icem_bridge"
+    cwd.mkdir(parents=True, exist_ok=True)
     _ensure_dirs()
+    _clear_stale_icem_commands()
     try:
-        if STOP_FILE.exists():
-            STOP_FILE.unlink()
-    except Exception:
+        if ICEM_STATUS_FILE.exists():
+            ICEM_STATUS_FILE.unlink()
+    except OSError:
         pass
 
+    arguments: list[str] = []
+    if batch:
+        arguments.append("-batch")
+    arguments.extend(["-script", str(ICEM_BRIDGE_SCRIPT)])
+    arguments.extend(_split_extra_args(extra_args))
+    if startup_project:
+        arguments.append(startup_project)
+
     env = os.environ.copy()
-    env["ANSYS_WORKBENCH_MCP_HOME"] = str(MCP_HOME)
-    proc = subprocess.Popen(
-        _workbench_command(BRIDGE_JOURNAL, batch=batch),
-        cwd=str(SERVER_ROOT),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    env["ANSYS_ICEM_MCP_HOME"] = str(ICEM_HOME)
+    env["ICEM_MCP_BATCH"] = "1" if batch else "0"
+    try:
+        command = _icem_command(arguments)
+    except ValueError as exc:
+        return _json({"ok": False, "error": str(exc)})
+    log_handle = ICEM_LOG_FILE.open("a", encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    finally:
+        log_handle.close()
 
     deadline = time.time() + max(1, int(wait_seconds))
     ping_result: dict[str, Any] = {}
     while time.time() < deadline:
-        status = _read_status()
+        status = _read_icem_status()
         if status.get("status") == "running":
-            ping_result = _send_command("ping", timeout=5.0)
-            if ping_result.get("success"):
-                return _json({"ok": True, "pid": proc.pid, "status": status, "ping": ping_result})
-        time.sleep(0.5)
-
-    return _json({"ok": False, "pid": proc.pid, "status": _read_status(), "detail": "Bridge did not answer before timeout"})
-
-
-@mcp.tool()
-def stop_workbench_bridge(timeout_seconds: int = 10) -> str:
-    """Signal the Workbench bridge loop to stop."""
-    result = _send_command("stop", timeout=min(float(timeout_seconds), 5.0))
-    if not result.get("success"):
-        try:
-            STOP_FILE.write_text("stop", encoding="utf-8")
-        except Exception:
-            pass
-
-    deadline = time.time() + max(1, int(timeout_seconds))
-    while time.time() < deadline:
-        status = _read_status()
-        if status.get("status") in {"stopped", "ready"}:
-            return _json({"ok": True, "status": status, "command_result": result})
-        time.sleep(0.25)
-
-    return _json({"ok": False, "status": _read_status(), "command_result": result})
-
-
-@mcp.tool()
-def check_workbench_connection() -> str:
-    """Check whether the Workbench bridge journal is running and responding."""
-    status = _read_status()
-    if not status:
-        return "Workbench bridge status not found. Run start_workbench_bridge() or load ansys_workbench_bridge.wbjn in Workbench."
-
-    if status.get("status") != "running":
-        return f"Workbench bridge is not running: {_json(status)}"
-
-    result = _send_command("ping", timeout=10.0)
-    if result.get("success"):
-        data = result.get("data", {})
-        version = data.get("version", "?") if isinstance(data, dict) else "?"
-        return f"Connected to Ansys Workbench bridge v{version}.\nStatus: {_json(status)}"
-    return f"Workbench bridge status exists but ping failed: {_json(result)}"
-
-
-@mcp.tool()
-def execute_workbench_script(script: str, timeout_seconds: int = 60) -> str:
-    """Execute Python/Workbench journal code inside the running Workbench bridge."""
-    result = _send_command("execute_script", timeout=float(timeout_seconds), script=script)
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def get_project_info(timeout_seconds: int = 30) -> str:
-    """Get project/system/component information from the running Workbench bridge."""
-    result = _send_command("get_project_info", timeout=float(timeout_seconds))
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def open_project(project_file: str, timeout_seconds: int = 120) -> str:
-    """Open a Workbench project in the running Workbench bridge."""
-    result = _send_command("open_project", timeout=float(timeout_seconds), project_file=project_file)
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def save_project(project_file: str = "", overwrite: bool = True, timeout_seconds: int = 120) -> str:
-    """Save the current Workbench project through the running bridge."""
-    result = _send_command(
-        "save_project",
-        timeout=float(timeout_seconds),
-        project_file=project_file,
-        overwrite=overwrite,
-    )
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def update_project(timeout_seconds: int = 600) -> str:
-    """Run Workbench Update() in the running bridge."""
-    result = _send_command("update_project", timeout=float(timeout_seconds))
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def probe_workbench_analysis_templates_live(timeout_seconds: int = 60) -> str:
-    """Check Workbench template availability for the supported analysis wrappers."""
-    result = _send_command(
-        "probe_analysis_templates",
-        timeout=float(timeout_seconds),
-        analysis_templates=WORKBENCH_ANALYSIS_TEMPLATES,
-    )
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def create_workbench_analysis_system_live(
-    analysis_type: str,
-    project_dir: str,
-    project_name: str = "",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    reset_project: bool = True,
-    template_name: str = "",
-    solver: str = "",
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Workbench analysis system in the running bridge.
-
-    Supported analysis_type values include steady_state_thermal,
-    transient_thermal, static_structural, transient_structural, modal,
-    harmonic_response, response_spectrum, random_vibration, cfx, and fluent.
-    template_name/solver can override the built-in mapping.
-    """
-    try:
-        candidates = _analysis_candidates(analysis_type, template_name, solver)
-    except ValueError as exc:
-        return _json({"ok": False, "error": str(exc)})
-    result = _send_command(
-        "create_analysis_system",
-        timeout=float(timeout_seconds),
-        analysis_type=_analysis_key(analysis_type),
-        project_dir=project_dir,
-        project_name=project_name or _default_project_name(analysis_type),
-        geometry_file=geometry_file,
-        refresh_model=refresh_model,
-        reset_project=reset_project,
-        template_candidates=candidates,
-    )
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def create_steady_state_thermal_system_live(
-    project_dir: str,
-    project_name: str = "steady_state_thermal",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Steady-State Thermal system in the running Workbench bridge."""
-    result = _send_command(
-        "create_steady_state_thermal_system",
-        timeout=float(timeout_seconds),
-        project_dir=project_dir,
-        project_name=project_name,
-        geometry_file=geometry_file,
-        refresh_model=refresh_model,
-    )
-    return _format_bridge_result(result)
-
-
-@mcp.tool()
-def create_transient_thermal_system_live(
-    project_dir: str,
-    project_name: str = "transient_thermal",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Transient Thermal system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "transient_thermal",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_static_structural_system_live(
-    project_dir: str,
-    project_name: str = "static_structural",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Static Structural system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "static_structural",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_transient_structural_system_live(
-    project_dir: str,
-    project_name: str = "transient_structural",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Transient Structural dynamics system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "transient_structural",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_modal_analysis_system_live(
-    project_dir: str,
-    project_name: str = "modal_analysis",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Modal dynamics system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "modal",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_harmonic_response_system_live(
-    project_dir: str,
-    project_name: str = "harmonic_response",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Harmonic Response dynamics system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "harmonic_response",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_response_spectrum_system_live(
-    project_dir: str,
-    project_name: str = "response_spectrum",
-    geometry_file: str = "",
-    refresh_model: bool = False,
-    timeout_seconds: int = 180,
-) -> str:
-    """Create a Response Spectrum dynamics system in the running Workbench bridge."""
-    return create_workbench_analysis_system_live(
-        "response_spectrum",
-        project_dir,
-        project_name,
-        geometry_file,
-        refresh_model,
-        True,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-@mcp.tool()
-def create_random_vibration_system_live(
-    project_dir: str,
-    project_name: str = "random_vibration",
+            ping_result = _send_icem_command("ping", timeout=5.0)
+            if pin…4872 tokens truncated…ect_name: str = "random_vibration",
     geometry_file: str = "",
     refresh_model: bool = False,
     timeout_seconds: int = 180,

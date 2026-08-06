@@ -13,3 +13,7 @@ __pycache__/
 
 # Backup files
 *.bak
+
+# Runtime state
+icem/
+runs/icem_bridge/

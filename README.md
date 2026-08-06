@@ -1,11 +1,14 @@
 # Ansys Workbench MCP
 
-一个用于连接 **Codex / MCP 客户端** 和 **Ansys Workbench** 的本地桥接项目。它通过文件队列 IPC 让外部 AI 助手向 Workbench 发送命令，并由 Workbench 侧 journal 执行脚本、创建系统、保存项目和返回结果。
+一个用于连接 **Codex / MCP 客户端** 和 **Ansys Workbench / ICEM CFD** 的本地桥接项目。它通过文件队列 IPC 让外部 AI 助手向 Workbench 或 ICEM CFD 发送命令，并在 Ansys 进程内执行脚本和返回结果。
 
-本项目不是 Ansys 官方项目，也不通过鼠标点击 GUI。它封装的是 Ansys 已支持的自动化入口：Workbench journal、Workbench scripting、MAPDL batch、Fluent journal 和 CFX solver batch。
+本项目不是 Ansys 官方项目，也不依赖鼠标点击 GUI。它封装的是 Ansys 已支持的自动化入口：Workbench journal、Workbench scripting、ICEM Tcl/Replay、MAPDL batch、Fluent journal 和 CFX solver batch。
 
 ## 最新更新
 
+- **ICEM CFD 常驻桥**：启动 GUI 或无界面 ICEM 会话，并直接执行 Tcl/Replay 命令
+- **ICEM CFD 批处理**：通过 `run_icem_replay` 运行一次性网格脚本，无需脚本自行添加 `exit`
+- **ICEM 命令发现**：查询当前会话信息，并按模式列出 `ic_*`、`ic_hex_*` 等命令
 - **通用 Workbench 分析系统创建**：通过 `create_workbench_analysis_system_live` 创建指定模板的分析系统
 - **分析模板探测**：通过 `probe_workbench_analysis_templates_live` 检查当前 Ansys 安装中可用的 Workbench 模板
 - **热分析封装**：支持稳态热和瞬态热系统创建
@@ -31,10 +34,15 @@
 
 Workbench 侧由 `ansys_workbench_bridge.wbjn` 轮询 `commands/` 目录。MCP server 写入命令文件，Workbench 执行后把结果写入 `results/`，Codex 再读取结果并返回给用户。
 
+ICEM CFD 侧由 `icem_cfd_bridge.tcl` 轮询 `icem/commands/`。每条命令引用一个独立 Tcl/Replay 脚本，执行结果、错误堆栈和心跳分别写入 `icem/results/`、`icem/status.json` 和 `icem/icem_bridge.log`。
+
 ## 功能
 
-- 检查本机 Ansys Workbench、Mechanical、MAPDL、Fluent、CFX 路径
+- 检查本机 Ansys Workbench、Mechanical、MAPDL、Fluent、CFX、ICEM CFD 路径
 - 启动、停止和检查 Workbench bridge
+- 启动、停止和检查 ICEM CFD 常驻桥
+- 在当前 ICEM CFD 会话中直接执行 Tcl/Replay 命令
+- 查询 ICEM 会话和可用命令，或运行一次性 Replay 批处理
 - 在正在运行的 Workbench 会话中执行脚本
 - 读取当前 Workbench 项目的系统和组件信息
 - 打开、保存、更新 Workbench 项目
@@ -95,6 +103,7 @@ MAPDL:      D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe
 Fluent:     D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe
 CFX solve:  D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe
 CFX pre:    D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe
+ICEM CFD:   D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat
 ```
 
 如果你的安装路径不同，后续在 Codex MCP 配置里改对应环境变量。
@@ -126,6 +135,7 @@ ANSYS_MAPDL = 'D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe'
 ANSYS_FLUENT = 'D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe'
 ANSYS_CFX_SOLVE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe'
 ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
+ANSYS_ICEM_CFD = 'D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat'
 ```
 
 修改后重启 Codex，让 MCP server 重新加载。
@@ -140,7 +150,7 @@ ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
 check_ansys_installation
 ```
 
-该工具会检查 Workbench、Mechanical、MAPDL、Fluent、CFX 和 bridge journal 是否存在。
+该工具会检查 Workbench、Mechanical、MAPDL、Fluent、CFX、ICEM CFD 和两个 bridge 脚本是否存在。
 
 ### 启动 Workbench bridge
 
@@ -191,6 +201,47 @@ cd D:\ansys-workbench-mcp
 .\.venv\Scripts\python.exe .\stop_mcp.py
 ```
 
+### 使用 ICEM CFD 常驻桥
+
+启动带界面的 ICEM CFD：
+
+```text
+start_icem_bridge
+```
+
+启动无界面的常驻会话：
+
+```text
+start_icem_bridge(batch=true)
+```
+
+连接后可直接执行 ICEM Tcl/Replay 命令：
+
+```text
+execute_icem_script(script="ic_load_tetin {D:/cases/model.tin}")
+```
+
+查询会话或 Blocking 命令：
+
+```text
+get_icem_session_info
+list_icem_commands(pattern="ic_hex_*", limit=300)
+```
+
+运行现有 Replay 文件作为一次性批处理：
+
+```text
+run_icem_replay(replay_file="D:/cases/mesh.rpl", workdir="D:/cases")
+```
+
+停止常驻会话并关闭由桥启动的 ICEM 进程：
+
+```text
+stop_icem_bridge
+```
+
+`execute_icem_script` 在 ICEM 自身的 Tcl 解释器中执行，能够调用当前安装中实际存在的 `ic_*` 命令。对于建几何、Blocking、网格质量和导出流程，推荐先在 ICEM 的 Replay Control 中录制一小段命令，再通过该工具参数化和复用。
+
 ### 工作模式
 
 | 模式 | 是否需要 Workbench bridge | 适用场景 |
@@ -200,6 +251,8 @@ cd D:\ansys-workbench-mcp
 | MAPDL batch | 不需要 | 直接运行 APDL `.dat` 输入文件 |
 | Fluent journal | 不需要 | 直接运行 Fluent TUI/journal 自动化 |
 | CFX solver | 不需要 | 直接运行 CFX `.def` solver input |
+| ICEM 常驻桥 | 不需要 Workbench；需要 ICEM bridge | 在同一 ICEM 会话中持续导入、Blocking、划分网格和查询状态 |
+| ICEM Replay batch | 不需要 | 一次性运行 ICEM Tcl/Replay 网格流程 |
 
 ## MCP 工具
 
@@ -208,6 +261,14 @@ cd D:\ansys-workbench-mcp
 | 工具 | 说明 |
 | --- | --- |
 | `check_ansys_installation` | 检查 Ansys 可执行文件和 bridge journal 路径 |
+| `check_icem_installation` | 检查 ICEM CFD 启动器和 Tcl bridge |
+| `start_icem_bridge` | 启动带 GUI 或无界面的 ICEM CFD 常驻桥 |
+| `stop_icem_bridge` | 停止常驻桥并关闭对应 ICEM 进程 |
+| `check_icem_connection` | 检查 ICEM CFD 会话是否在线并响应 |
+| `execute_icem_script` | 在当前 ICEM 会话中执行 Tcl/Replay 命令 |
+| `get_icem_session_info` | 查询 ICEM PID、目录、Tcl 版本和命令数量 |
+| `list_icem_commands` | 按 Tcl glob 模式列出当前 ICEM 命令 |
+| `run_icem_replay` | 一次性批处理运行 ICEM Tcl/Replay 文件 |
 | `start_workbench_bridge` | 启动 Workbench bridge |
 | `stop_workbench_bridge` | 停止 Workbench bridge |
 | `check_workbench_connection` | 检查 Workbench bridge 是否在线并响应 |
@@ -243,6 +304,7 @@ cd D:\ansys-workbench-mcp
 | --- | --- |
 | `ansys-workbench://status` | 当前 bridge 状态、PID、命令计数和时间戳 |
 | `ansys-workbench://installation` | 当前配置的 Ansys 可执行文件路径 |
+| `ansys-workbench://icem/status` | 当前 ICEM CFD bridge 状态、PID、命令计数和心跳 |
 
 ## 分析系统类型
 
@@ -325,13 +387,16 @@ D:\ansys-workbench-mcp\results\my_command.json
 D:\ansys-workbench-mcp\
 ├── mcp_server.py                  # MCP server，运行在 Codex 外部进程中
 ├── ansys_workbench_bridge.wbjn    # Workbench 侧 bridge journal
+├── icem_cfd_bridge.tcl            # ICEM CFD 侧常驻 Tcl bridge
 ├── stop_mcp.py                    # 发送停止信号
 ├── requirements.txt               # Python 依赖
 ├── .mcp.json                      # MCP 客户端配置示例
 ├── commands\                      # MCP server 写入命令
 ├── results\                       # Workbench bridge 写回结果
 ├── scripts\                       # bridge 执行临时脚本
+├── icem\                          # ICEM 命令、结果、状态和日志（运行时生成）
 ├── runs\                          # 示例工程和求解输出
+├── tests\                         # Python IPC 和工具注册测试
 ├── status.json                    # bridge heartbeat 状态
 ├── mcp.log                        # bridge 日志
 └── stop.flag                      # 停止信号文件
@@ -348,7 +413,7 @@ D:\ansys-workbench-mcp\
 
 - **`check_ansys_installation` 显示路径不存在**
   - 检查 Ansys 实际安装路径
-  - 修改 `ANSYS_RUNWB2`、`ANSYS_MECHANICAL`、`ANSYS_MAPDL`、`ANSYS_FLUENT`、`ANSYS_CFX_SOLVE`、`ANSYS_CFX_PRE`
+  - 修改 `ANSYS_RUNWB2`、`ANSYS_MECHANICAL`、`ANSYS_MAPDL`、`ANSYS_FLUENT`、`ANSYS_CFX_SOLVE`、`ANSYS_CFX_PRE`、`ANSYS_ICEM_CFD`
 
 - **bridge 状态是 running 但命令超时**
   - 调用 `stop_workbench_bridge`
@@ -360,6 +425,12 @@ D:\ansys-workbench-mcp\
   - 手动在 Workbench 中运行 `File -> Run Script... -> ansys_workbench_bridge.wbjn`
   - 确认没有旧的 `stop.flag`
   - 确认 `ANSYS_WORKBENCH_MCP_HOME` 指向项目目录
+
+- **ICEM 启动了但 `check_icem_connection` 超时**
+  - 不要连接一个普通方式启动的旧 ICEM 窗口；调用 `start_icem_bridge` 启动带 Tcl bridge 的新会话
+  - 查看 `D:\ansys-workbench-mcp\icem\icem_bridge.log`
+  - 确认 `icem_cfd_bridge.tcl` 存在，并检查许可证是否成功签出
+  - 如果 GUI 环境有问题，先用 `start_icem_bridge(batch=true)` 验证无界面连接
 
 - **Fluent Workbench 模板找不到**
   - 先使用 `run_fluent_journal`
@@ -376,6 +447,9 @@ D:\ansys-workbench-mcp\
 
 - MCP stdio 可以列出工具
 - Ansys 2025 R1 路径检查正常
+- ICEM CFD 2025 R1 GUI 和 batch 常驻桥均可 ping、执行 Tcl 并正常停止
+- ICEM Tcl 8.4.11 会话中可发现 `ic_*` 和 `ic_hex_*` 命令
+- `run_icem_replay` 可执行不含 `exit` 的 Replay 文件并返回结果
 - Workbench bridge 可以启动并通过 ping 响应
 - Workbench 会话内脚本可以执行并返回输出
 - 可探测 Workbench 分析模板
