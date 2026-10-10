@@ -531,58 +531,50 @@ def start_icem_bridge(
                     {
                         "ok": True,
                         "pid": proc.pid,
+                        "batch": batch,
+                        "workdir": str(cwd),
+                        "command": command,
                         "status": status,
                         "ping": ping_result,
                     }
                 )
         if proc.poll() is not None:
-            return _json(
-                {
-                    "ok": False,
-                    "pid": proc.pid,
-                    "returncode": proc.returncode,
-                    "status": _read_icem_status(),
-                    "detail": "ICEM CFD exited before the bridge became ready",
-                    "log_tail": _read_tail(ICEM_LOG_FILE),
-                }
-            )
+            break
         time.sleep(0.5)
 
     return _json(
         {
             "ok": False,
             "pid": proc.pid,
+            "returncode": proc.poll(),
+            "batch": batch,
             "status": _read_icem_status(),
             "detail": "ICEM CFD bridge did not answer before timeout",
+            "log_file": str(ICEM_LOG_FILE),
             "log_tail": _read_tail(ICEM_LOG_FILE),
         }
     )
 
 
 @mcp.tool()
-def stop_icem_bridge(timeout_seconds: int = 10) -> str:
-    """Signal the persistent ICEM CFD bridge to stop and exit."""
+def stop_icem_bridge(timeout_seconds: int = 15) -> str:
+    """Stop the persistent ICEM CFD bridge and close its ICEM process."""
     result = _send_icem_command("stop", timeout=min(float(timeout_seconds), 5.0))
+    if not result.get("success"):
+        return _json({"ok": False, "command_result": result, "status": _read_icem_status()})
+
     deadline = time.time() + max(1, int(timeout_seconds))
     while time.time() < deadline:
         status = _read_icem_status()
         if status.get("status") == "stopped":
             return _json({"ok": True, "status": status, "command_result": result})
         time.sleep(0.25)
-
-    return _json(
-        {
-            "ok": False,
-            "status": _read_icem_status(),
-            "command_result": result,
-            "log_tail": _read_tail(ICEM_LOG_FILE),
-        }
-    )
+    return _json({"ok": False, "status": _read_icem_status(), "command_result": result})
 
 
 @mcp.tool()
 def check_icem_connection() -> str:
-    """Check whether the persistent ICEM CFD bridge is running and responding."""
+    """Check whether the persistent ICEM CFD Tcl bridge is responding."""
     status = _read_icem_status()
     if not status:
         return _json(
@@ -592,43 +584,54 @@ def check_icem_connection() -> str:
             }
         )
     if status.get("status") != "running":
-        return _json({"ok": False, "status": status, "error": "ICEM CFD bridge is not running"})
-
+        return _json({"ok": False, "error": "ICEM CFD bridge is not running", "status": status})
     result = _send_icem_command("ping", timeout=10.0)
     return _json({"ok": bool(result.get("success")), "status": status, "ping": result})
 
 
 @mcp.tool()
-def execute_icem_script(script: str, timeout_seconds: int = 60) -> str:
-    """Execute Tcl/Replay commands inside the running ICEM CFD bridge."""
+def execute_icem_script(script: str, timeout_seconds: int = 120) -> str:
+    """Execute Tcl/Replay commands inside the live ICEM CFD bridge session.
+
+    The returned result is the value produced by the final Tcl command. This
+    provides direct access to ICEM commands such as ic_load_tetin and blocking,
+    meshing, quality, and output-interface commands recorded by Replay Control.
+    """
+    if not script.strip():
+        return _json({"ok": False, "error": "script must not be empty"})
     result = _send_icem_command("execute", timeout=float(timeout_seconds), script=script)
     return _format_icem_result(result)
 
 
 @mcp.tool()
 def get_icem_session_info(timeout_seconds: int = 30) -> str:
-    """Return basic information about the running ICEM CFD Tcl session."""
-    script = """
-set __mcp_info [list \
-    pid [pid] \
-    cwd [pwd] \
-    tcl_version [info patchlevel] \
-    command_count [llength [info commands]]]
-return $__mcp_info
-""".strip()
+    """Get basic information from the live ICEM CFD Tcl interpreter."""
+    script = r"""
+set __icem_mcp_info ""
+append __icem_mcp_info "pid=[pid]\n"
+append __icem_mcp_info "cwd=[pwd]\n"
+append __icem_mcp_info "tcl_patchlevel=[info patchlevel]\n"
+append __icem_mcp_info "ic_commands=[llength [info commands ic_*]]\n"
+append __icem_mcp_info "blocking_commands=[llength [info commands ic_hex_*]]\n"
+set __icem_mcp_info
+"""
     result = _send_icem_command("execute", timeout=float(timeout_seconds), script=script)
     return _format_icem_result(result)
 
 
 @mcp.tool()
-def list_icem_commands(pattern: str = "ic_*", limit: int = 200, timeout_seconds: int = 30) -> str:
-    """List commands available in the running ICEM CFD Tcl interpreter."""
-    final_limit = max(1, min(int(limit), 5000))
+def list_icem_commands(pattern: str = "ic_*", limit: int = 300, timeout_seconds: int = 30) -> str:
+    """List commands available in the live ICEM Tcl interpreter.
+
+    pattern is a Tcl info-commands glob, for example ic_hex_* or ic_geo_*.
+    """
+    safe_limit = max(1, min(int(limit), 2000))
     script = "\n".join(
         [
-            f"set __mcp_commands [lsort [info commands {_tcl_quote(pattern)}]]",
-            f"set __mcp_commands [lrange $__mcp_commands 0 {final_limit - 1}]",
-            'return [join $__mcp_commands "\\n"]',
+            f"set __icem_mcp_commands [lsort [info commands {_tcl_quote(pattern)}]]",
+            f"set __icem_mcp_commands [lrange $__icem_mcp_commands 0 {safe_limit - 1}]",
+            'join $__icem_mcp_commands "\\n"',
+            "",
         ]
     )
     result = _send_icem_command("execute", timeout=float(timeout_seconds), script=script)
@@ -639,40 +642,85 @@ def list_icem_commands(pattern: str = "ic_*", limit: int = 200, timeout_seconds:
 def run_icem_replay(
     replay_file: str,
     workdir: str = "",
-    timeout_seconds: int = 600,
+    project_file: str = "",
     extra_args: str = "",
+    timeout_seconds: int = 3600,
 ) -> str:
-    """Run an ICEM CFD Tcl/Replay file as a one-shot batch job."""
+    """Run an ICEM CFD Tcl/Replay script as a one-shot batch job.
+
+    A generated wrapper sources the replay and exits ICEM when it finishes, so
+    the original replay file does not need an explicit exit command.
+    """
     if not ICEM_CFD.exists():
         return _json({"ok": False, "error": f"ICEM CFD launcher not found: {ICEM_CFD}"})
 
     replay = _as_path(replay_file)
     if not replay.exists():
-        return _json({"ok": False, "error": f"ICEM Replay file not found: {replay}"})
+        return _json({"ok": False, "error": f"ICEM replay file not found: {replay}"})
+
+    startup_project = ""
+    if project_file:
+        project = _as_path(project_file)
+        if not project.exists():
+            return _json({"ok": False, "error": f"ICEM project/input file not found: {project}"})
+        startup_project = str(project)
 
     cwd = _as_path(workdir) if workdir else replay.parent
     cwd.mkdir(parents=True, exist_ok=True)
-    arguments = ["-batch", "-script", str(replay), *_split_extra_args(extra_args)]
+    run_id = uuid.uuid4().hex[:8]
+    wrapper = cwd / f"icem_mcp_wrapper_{run_id}.tcl"
+    result_file = cwd / f"icem_mcp_result_{run_id}.txt"
+    wrapper_script = f"""set __icem_mcp_code [catch {{source {_tcl_quote(replay)}}} __icem_mcp_result]
+set __icem_mcp_channel [open {_tcl_quote(result_file)} w]
+fconfigure $__icem_mcp_channel -encoding utf-8 -translation lf
+puts $__icem_mcp_channel "code=$__icem_mcp_code"
+puts $__icem_mcp_channel "result=$__icem_mcp_result"
+if {{$__icem_mcp_code != 0 && [info exists errorInfo]}} {{
+    puts $__icem_mcp_channel "errorInfo=$errorInfo"
+}}
+close $__icem_mcp_channel
+if {{$__icem_mcp_code == 0 || $__icem_mcp_code == 2}} {{
+    exit 0
+}}
+exit 1
+"""
+    wrapper.write_text(wrapper_script, encoding="utf-8")
+
+    arguments = ["-batch", "-script", str(wrapper)]
+    arguments.extend(_split_extra_args(extra_args))
+    if startup_project:
+        arguments.append(startup_project)
     try:
         command = _icem_command(arguments)
     except ValueError as exc:
         return _json({"ok": False, "error": str(exc)})
 
     try:
-        result = _run_process(command, cwd, timeout_seconds)
+        process_result = _run_process(command, cwd, timeout_seconds)
     except subprocess.TimeoutExpired:
         return _json(
             {
                 "ok": False,
                 "error": f"Timed out after {timeout_seconds}s",
                 "replay_file": str(replay),
+                "wrapper_file": str(wrapper),
             }
         )
+
+    result_text = _read_tail(result_file)
+    successful_code = result_text.startswith("code=0") or result_text.startswith("code=2")
+    ok = process_result["returncode"] == 0 and result_file.exists() and successful_code
     return _json(
         {
-            "ok": result["returncode"] == 0,
+            "ok": ok,
             "replay_file": str(replay),
-            **result,
+            "project_file": startup_project,
+            "workdir": str(cwd),
+            "wrapper_file": str(wrapper),
+            "result_file": str(result_file),
+            "command": command,
+            "process": process_result,
+            "result_tail": result_text,
         }
     )
 
@@ -699,7 +747,7 @@ def start_workbench_bridge(batch: bool = True, wait_seconds: int = 20) -> str:
     try:
         if STOP_FILE.exists():
             STOP_FILE.unlink()
-    except OSError:
+    except Exception:
         pass
 
     env = os.environ.copy()
@@ -722,14 +770,7 @@ def start_workbench_bridge(batch: bool = True, wait_seconds: int = 20) -> str:
                 return _json({"ok": True, "pid": proc.pid, "status": status, "ping": ping_result})
         time.sleep(0.5)
 
-    return _json(
-        {
-            "ok": False,
-            "pid": proc.pid,
-            "status": _read_status(),
-            "detail": "Bridge did not answer before timeout",
-        }
-    )
+    return _json({"ok": False, "pid": proc.pid, "status": _read_status(), "detail": "Bridge did not answer before timeout"})
 
 
 @mcp.tool()
@@ -739,7 +780,7 @@ def stop_workbench_bridge(timeout_seconds: int = 10) -> str:
     if not result.get("success"):
         try:
             STOP_FILE.write_text("stop", encoding="utf-8")
-        except OSError:
+        except Exception:
             pass
 
     deadline = time.time() + max(1, int(timeout_seconds))
