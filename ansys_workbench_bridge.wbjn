@@ -1,0 +1,1025 @@
+# encoding: utf-8
+"""Ansys Workbench side of the ansys-workbench-mcp file IPC bridge."""
+
+import io
+import json
+import os
+import sys
+import time
+import traceback
+import uuid
+from datetime import datetime
+
+__version__ = "0.4.0"
+
+
+def _resolve_mcp_home():
+    env_home = os.environ.get("ANSYS_WORKBENCH_MCP_HOME", "").strip()
+    if env_home:
+        return os.path.abspath(os.path.expanduser(env_home))
+    try:
+        this_file = os.path.abspath(__file__)
+        script_dir = os.path.dirname(this_file)
+        if os.path.exists(os.path.join(script_dir, "mcp_server.py")):
+            return script_dir
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), ".ansys-workbench-mcp")
+
+
+MCP_HOME = _resolve_mcp_home()
+COMMANDS_DIR = os.path.join(MCP_HOME, "commands")
+RESULTS_DIR = os.path.join(MCP_HOME, "results")
+SCRIPTS_DIR = os.path.join(MCP_HOME, "scripts")
+RUNS_DIR = os.path.join(MCP_HOME, "runs")
+STATUS_FILE = os.path.join(MCP_HOME, "status.json")
+STOP_FILE = os.path.join(MCP_HOME, "stop.flag")
+LOG_FILE = os.path.join(MCP_HOME, "mcp.log")
+
+STALE_COMMAND_AGE = 120.0
+_mcp_running = False
+_mcp_commands_processed = 0
+_mcp_start_time = None
+_script_output_lines = []
+
+
+def ensure_dirs():
+    for path in [COMMANDS_DIR, RESULTS_DIR, SCRIPTS_DIR, RUNS_DIR]:
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+
+def _log(level, message):
+    try:
+        line = "[%s] %s: %s\n" % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), level, message)
+        with io.open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+def _write_json(path, data):
+    tmp = path + ".tmp"
+    with io.open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        with io.open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+
+
+def _read_json(path):
+    with io.open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_status(status, message=""):
+    payload = {
+        "status": status,
+        "message": message,
+        "version": __version__,
+        "timestamp": time.time(),
+        "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "pid": os.getpid(),
+        "mcp_home": MCP_HOME,
+        "commands_processed": _mcp_commands_processed,
+    }
+    try:
+        _write_json(STATUS_FILE, payload)
+    except Exception:
+        pass
+
+
+def _cleanup_stale_commands():
+    now = time.time()
+    try:
+        for name in os.listdir(COMMANDS_DIR):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(COMMANDS_DIR, name)
+            try:
+                if now - os.path.getmtime(path) > STALE_COMMAND_AGE:
+                    os.remove(path)
+                    _log("WARN", "Removed stale command: " + name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _stringify(value):
+    try:
+        if value is None:
+            return ""
+        try:
+            return value.ToString()
+        except Exception:
+            pass
+        return str(value)
+    except Exception:
+        return "<unprintable>"
+
+
+def _safe_attr(obj, name):
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
+
+
+def _mcp_print(*args):
+    global _script_output_lines
+    _script_output_lines.append(" ".join(_stringify(x) for x in args))
+
+
+class _CaptureWriter(object):
+    def write(self, value):
+        global _script_output_lines
+        text = _stringify(value)
+        if text and text != "\n":
+            _script_output_lines.append(text.rstrip("\n"))
+
+    def flush(self):
+        pass
+
+
+def execute_script(script_content, command_id):
+    global _script_output_lines
+    result = {"id": command_id, "success": False, "output": "", "error": None, "timestamp": time.time()}
+    script_path = os.path.join(SCRIPTS_DIR, "script_" + command_id + ".wbjn")
+    try:
+        with io.open(script_path, "w", encoding="utf-8") as f:
+            f.write(script_content)
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+    _script_output_lines = []
+    exec_globals = dict(globals())
+    exec_globals["__name__"] = "__main__"
+    exec_globals["__file__"] = script_path
+    exec_globals["print"] = _mcp_print
+
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    writer = _CaptureWriter()
+    try:
+        sys.stdout = writer
+        sys.stderr = writer
+        with io.open(script_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        exec(compile(code, script_path, "exec"), exec_globals)
+        result["success"] = True
+        result["output"] = "\n".join(_script_output_lines)
+    except Exception as e:
+        result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()
+    try:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+    except Exception:
+        pass
+
+    try:
+        os.remove(script_path)
+    except Exception:
+        pass
+    return result
+
+
+def get_project_info():
+    info = {
+        "mcp_home": MCP_HOME,
+        "systems": [],
+        "messages": [],
+    }
+    try:
+        systems = GetAllSystems()
+        for index, system in enumerate(systems):
+            system_info = {
+                "index": index,
+                "name": _stringify(_safe_attr(system, "Name")),
+                "display_text": _stringify(_safe_attr(system, "DisplayText")),
+                "components": [],
+            }
+            for component_name in ["Engineering Data", "Geometry", "Model", "Setup", "Solution", "Results"]:
+                try:
+                    component = system.GetComponent(Name=component_name)
+                    system_info["components"].append({
+                        "name": component_name,
+                        "exists": True,
+                        "display_text": _stringify(_safe_attr(component, "DisplayText")),
+                    })
+                except Exception:
+                    pass
+            info["systems"].append(system_info)
+    except Exception as e:
+        info["systems_error"] = str(e)
+
+    try:
+        for message in GetMessages():
+            try:
+                info["messages"].append({
+                    "type": _stringify(message.MessageType),
+                    "summary": _stringify(message.Summary),
+                })
+            except Exception:
+                info["messages"].append(_stringify(message))
+    except Exception:
+        pass
+    return info
+
+
+def open_project(project_file):
+    project_file = os.path.abspath(os.path.expanduser(project_file))
+    Open(FilePath=project_file)
+    return {"project_file": project_file, "project_info": get_project_info()}
+
+
+def save_project(project_file="", overwrite=True):
+    if project_file:
+        project_file = os.path.abspath(os.path.expanduser(project_file))
+        Save(FilePath=project_file, Overwrite=bool(overwrite))
+        return {"project_file": project_file, "saved": True}
+    Save()
+    return {"saved": True}
+
+
+def update_project():
+    Update()
+    return {"updated": True, "project_info": get_project_info()}
+
+
+def _resolve_template_candidates(candidates):
+    errors = []
+    for candidate in candidates:
+        name = _stringify(candidate.get("template_name", ""))
+        solver = _stringify(candidate.get("solver", ""))
+        try:
+            if solver:
+                return GetTemplate(TemplateName=name, Solver=solver), name, solver
+            return GetTemplate(TemplateName=name), name, solver
+        except Exception as e:
+            errors.append(name + "|" + solver + "|" + _stringify(e))
+    raise RuntimeError("No matching Workbench template. Tried: " + "; ".join(errors))
+
+
+def probe_analysis_templates(analysis_templates):
+    results = {}
+    for analysis_type in sorted(analysis_templates.keys()):
+        candidates = analysis_templates.get(analysis_type, [])
+        try:
+            template, used_name, used_solver = _resolve_template_candidates(candidates)
+            results[analysis_type] = {
+                "available": True,
+                "template_name": used_name,
+                "solver": used_solver,
+                "template": _stringify(template),
+            }
+        except Exception as e:
+            results[analysis_type] = {
+                "available": False,
+                "error": _stringify(e),
+                "candidates": candidates,
+            }
+    return {"templates": results}
+
+
+def create_analysis_system(
+    project_dir,
+    project_name,
+    analysis_type,
+    template_candidates,
+    geometry_file="",
+    refresh_model=False,
+    reset_project=True,
+):
+    project_dir = os.path.abspath(os.path.expanduser(project_dir))
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir)
+    if not project_name:
+        project_name = analysis_type or "workbench_analysis"
+    project_file = os.path.join(project_dir, project_name + ".wbpj")
+
+    if reset_project:
+        Reset()
+    ClearMessages()
+    template, used_name, used_solver = _resolve_template_candidates(template_candidates)
+    system = template.CreateSystem()
+
+    if geometry_file:
+        geometry_file = os.path.abspath(os.path.expanduser(geometry_file))
+        geometry = system.GetContainer(ComponentName="Geometry")
+        geometry.SetFile(FilePath=geometry_file)
+
+    model_refreshed = False
+    try:
+        model = system.GetContainer(ComponentName="Model")
+        if refresh_model:
+            model.Refresh()
+            model_refreshed = True
+    except Exception:
+        pass
+
+    Save(FilePath=project_file, Overwrite=True)
+    return {
+        "analysis_type": analysis_type,
+        "template_name": used_name,
+        "solver": used_solver,
+        "project_file": project_file,
+        "geometry_file": geometry_file,
+        "model_refreshed": model_refreshed,
+        "project_info": get_project_info(),
+    }
+
+
+def _get_system_coupling_context():
+    """Return the System Coupling system and its Setup container."""
+    errors = []
+    for index, system in enumerate(GetAllSystems()):
+        try:
+            setup = system.GetContainer(ComponentName="Setup")
+            if hasattr(setup, "GetParticipants") and hasattr(setup, "CreateDataTransfer"):
+                return system, setup, index
+        except Exception as e:
+            errors.append(str(index) + ":" + _stringify(e))
+    raise RuntimeError("No System Coupling system was found. " + "; ".join(errors))
+
+
+def _entity_summary(entity):
+    summary = {"reference": _stringify(entity)}
+    for name in ["Name", "DisplayText", "InternalName", "Type", "Topology", "Exposure", "PhysicalType"]:
+        try:
+            value = getattr(entity, name)
+            summary[name] = _stringify(value)
+        except Exception:
+            pass
+    return summary
+
+
+def _system_coupling_snapshot():
+    system, setup, system_index = _get_system_coupling_context()
+    participants = []
+    for participant in setup.GetParticipants():
+        participant_info = _entity_summary(participant)
+        participant_info["regions"] = []
+        try:
+            regions = participant.GetRegions()
+        except Exception:
+            regions = []
+        for region in regions:
+            region_info = _entity_summary(region)
+            region_info["variables"] = []
+            try:
+                variables = region.GetVariables()
+            except Exception:
+                variables = []
+            for variable in variables:
+                region_info["variables"].append(_entity_summary(variable))
+            participant_info["regions"].append(region_info)
+        participants.append(participant_info)
+
+    transfers = []
+    for transfer in setup.GetDataTransfers():
+        transfer_info = _entity_summary(transfer)
+        for name in [
+            "SourceParticipant", "SourceRegion", "SourceVariable",
+            "TargetParticipant", "TargetRegion", "TargetVariable", "IsSuppressed",
+        ]:
+            try:
+                transfer_info[name] = _stringify(getattr(transfer, name))
+            except Exception:
+                pass
+        transfers.append(transfer_info)
+
+    settings_info = {}
+    try:
+        settings = setup.GetAnalysisSettings()
+        for name in [
+            "AnalysisType", "DurationDefinedBy", "EndTime", "StepSize",
+            "NumberOfSteps", "MinimumIteration", "MaximumIteration",
+            "Initialization", "RestartStep", "RestartTime",
+        ]:
+            try:
+                settings_info[name] = _stringify(getattr(settings, name))
+            except Exception:
+                pass
+    except Exception as e:
+        settings_info["error"] = _stringify(e)
+
+    return {
+        "system_index": system_index,
+        "system": _stringify(system),
+        "setup": _stringify(setup),
+        "participants": participants,
+        "participant_count": len(participants),
+        "data_transfers": transfers,
+        "data_transfer_count": len(transfers),
+        "analysis_settings": settings_info,
+        "project_info": get_project_info(),
+    }
+
+
+def probe_system_coupling():
+    template = GetTemplate(TemplateName="System Coupling")
+    result = {
+        "available": True,
+        "template": _stringify(template),
+    }
+    try:
+        system, setup, _ = _get_system_coupling_context()
+        solution = system.GetContainer(ComponentName="Solution")
+        result["setup_api"] = sorted([name for name in dir(setup) if not name.startswith("_")])
+        result["solution_api"] = sorted([name for name in dir(solution) if not name.startswith("_")])
+        result["snapshot"] = _system_coupling_snapshot()
+    except RuntimeError:
+        result["detail"] = "Template exists; create a System Coupling system to inspect its live containers."
+    return result
+
+
+def create_cfx_mechanical_fsi_project(
+    project_dir,
+    project_name="cfx_mechanical_fsi",
+    cfx_geometry_file="",
+    mechanical_geometry_file="",
+    overwrite=False,
+):
+    project_dir = os.path.abspath(os.path.expanduser(project_dir))
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir)
+    project_file = os.path.join(project_dir, project_name + ".wbpj")
+    if os.path.exists(project_file) and not overwrite:
+        raise RuntimeError("Project already exists; choose another project_name or set overwrite=True: " + project_file)
+
+    for label, geometry_file in [
+        ("cfx", cfx_geometry_file),
+        ("mechanical", mechanical_geometry_file),
+    ]:
+        if geometry_file and not os.path.isfile(os.path.abspath(os.path.expanduser(geometry_file))):
+            raise RuntimeError(label + " geometry file does not exist: " + geometry_file)
+
+    Reset()
+    ClearMessages()
+    cfx = GetTemplate(TemplateName="Fluid Flow (CFX)").CreateSystem(Position="Default")
+    mechanical = GetTemplate(TemplateName="Transient Structural", Solver="ANSYS").CreateSystem(Position="Default")
+    coupling = GetTemplate(TemplateName="System Coupling").CreateSystem(Position="Default")
+
+    imported_geometry = {}
+    for label, system, geometry_file in [
+        ("cfx", cfx, cfx_geometry_file),
+        ("mechanical", mechanical, mechanical_geometry_file),
+    ]:
+        if geometry_file:
+            geometry_file = os.path.abspath(os.path.expanduser(geometry_file))
+            system.GetContainer(ComponentName="Geometry").SetFile(FilePath=geometry_file)
+            imported_geometry[label] = geometry_file
+
+    coupling_setup = coupling.GetComponent(Name="Setup")
+    cfx.GetComponent(Name="Setup").TransferData(TargetComponent=coupling_setup)
+    mechanical.GetComponent(Name="Setup").TransferData(TargetComponent=coupling_setup)
+    Save(FilePath=project_file, Overwrite=bool(overwrite))
+
+    return {
+        "project_file": project_file,
+        "systems_created": [
+            {"role": "fluid", "template": "Fluid Flow (CFX)", "system": _stringify(cfx)},
+            {"role": "structure", "template": "Transient Structural", "system": _stringify(mechanical)},
+            {"role": "coupling", "template": "System Coupling", "system": _stringify(coupling)},
+        ],
+        "connections_created": ["CFX Setup -> System Coupling Setup", "Transient Structural Setup -> System Coupling Setup"],
+        "imported_geometry": imported_geometry,
+        "participant_setup_complete": False,
+        "coupling_data_transfers_created": False,
+        "next_required_steps": [
+            "Complete the CFX mesh, transient physics, and a System Coupling boundary.",
+            "Complete the Mechanical mesh and a System Coupling Region boundary condition.",
+            "Refresh both participant Setup cells so regions and variables are published.",
+            "Create displacement and force data transfers, then update the System Coupling Solution.",
+        ],
+        "snapshot": _system_coupling_snapshot(),
+    }
+
+
+def connect_system_coupling_participants(system_indices):
+    coupling_system, coupling_setup, coupling_index = _get_system_coupling_context()
+    target = coupling_system.GetComponent(Name="Setup")
+    systems = GetAllSystems()
+    connected = []
+    for raw_index in system_indices:
+        index = int(raw_index)
+        if index == coupling_index:
+            raise RuntimeError("System index %s is the System Coupling system and cannot be its own participant" % index)
+        source = systems[index].GetComponent(Name="Setup")
+        source.TransferData(TargetComponent=target)
+        connected.append({"system_index": index, "system": _stringify(systems[index])})
+    Save()
+    return {"connected": connected, "snapshot": _system_coupling_snapshot()}
+
+
+def configure_system_coupling_settings(step_size="", end_time="", number_of_steps=0, minimum_iterations=0, maximum_iterations=0):
+    _, setup, _ = _get_system_coupling_context()
+    settings = setup.GetAnalysisSettings()
+    changed = {}
+    if end_time and int(number_of_steps) > 0:
+        raise ValueError("Choose end_time or number_of_steps, not both")
+    if int(minimum_iterations) > 0 and int(maximum_iterations) > 0 and int(minimum_iterations) > int(maximum_iterations):
+        raise ValueError("minimum_iterations must not exceed maximum_iterations")
+    if step_size or end_time or int(number_of_steps) > 0:
+        settings.AnalysisType = "Transient"
+        changed["AnalysisType"] = "Transient"
+    if step_size:
+        settings.StepSize = Quantity(step_size)
+        changed["StepSize"] = step_size
+    if end_time:
+        settings.DurationDefinedBy = "EndTime"
+        settings.EndTime = Quantity(end_time)
+        changed["DurationDefinedBy"] = "EndTime"
+        changed["EndTime"] = end_time
+    if int(number_of_steps) > 0:
+        settings.DurationDefinedBy = "NumberOfSteps"
+        settings.NumberOfSteps = int(number_of_steps)
+        changed["DurationDefinedBy"] = "NumberOfSteps"
+        changed["NumberOfSteps"] = int(number_of_steps)
+    if int(minimum_iterations) > 0:
+        settings.MinimumIteration = int(minimum_iterations)
+        changed["MinimumIteration"] = int(minimum_iterations)
+    if int(maximum_iterations) > 0:
+        settings.MaximumIteration = int(maximum_iterations)
+        changed["MaximumIteration"] = int(maximum_iterations)
+    Save()
+    return {"changed": changed, "snapshot": _system_coupling_snapshot()}
+
+
+def _resolve_transfer_side(setup, participant_name, region_name, variable_name):
+    participant = setup.GetParticipant(Name=participant_name)
+    region = participant.GetRegion(Name=region_name)
+    variable = region.GetVariable(Name=variable_name)
+    return participant, region, variable
+
+
+def create_system_coupling_data_transfer(
+    name,
+    source_participant,
+    source_region,
+    source_variable,
+    target_participant,
+    target_region,
+    target_variable,
+):
+    _, setup, _ = _get_system_coupling_context()
+    source = _resolve_transfer_side(setup, source_participant, source_region, source_variable)
+    target = _resolve_transfer_side(setup, target_participant, target_region, target_variable)
+    transfer = setup.CreateDataTransfer(
+        Name=name,
+        SourceParticipant=source[0],
+        SourceRegion=source[1],
+        SourceVariable=source[2],
+        TargetParticipant=target[0],
+        TargetRegion=target[1],
+        TargetVariable=target[2],
+    )
+    Save()
+    return {"created": _entity_summary(transfer), "snapshot": _system_coupling_snapshot()}
+
+
+def configure_cfx_mechanical_two_way_fsi(
+    cfx_participant,
+    cfx_region,
+    cfx_displacement_variable,
+    cfx_force_variable,
+    mechanical_participant,
+    mechanical_region,
+    mechanical_displacement_variable,
+    mechanical_force_variable,
+):
+    _, setup, _ = _get_system_coupling_context()
+    mechanical_displacement = _resolve_transfer_side(
+        setup, mechanical_participant, mechanical_region, mechanical_displacement_variable
+    )
+    cfx_displacement = _resolve_transfer_side(
+        setup, cfx_participant, cfx_region, cfx_displacement_variable
+    )
+    cfx_force = _resolve_transfer_side(
+        setup, cfx_participant, cfx_region, cfx_force_variable
+    )
+    mechanical_force = _resolve_transfer_side(
+        setup, mechanical_participant, mechanical_region, mechanical_force_variable
+    )
+    transfer_names = [
+        "Mechanical to CFX - Displacement",
+        "CFX to Mechanical - Force",
+    ]
+    existing_names = [_stringify(transfer.Name) for transfer in setup.GetDataTransfers()]
+    for name in transfer_names:
+        if name in existing_names:
+            raise RuntimeError("Data transfer already exists: " + name)
+    displacement = setup.CreateDataTransfer(
+        Name=transfer_names[0],
+        SourceParticipant=mechanical_displacement[0],
+        SourceRegion=mechanical_displacement[1],
+        SourceVariable=mechanical_displacement[2],
+        TargetParticipant=cfx_displacement[0],
+        TargetRegion=cfx_displacement[1],
+        TargetVariable=cfx_displacement[2],
+    )
+    try:
+        force = setup.CreateDataTransfer(
+            Name=transfer_names[1],
+            SourceParticipant=cfx_force[0],
+            SourceRegion=cfx_force[1],
+            SourceVariable=cfx_force[2],
+            TargetParticipant=mechanical_force[0],
+            TargetRegion=mechanical_force[1],
+            TargetVariable=mechanical_force[2],
+        )
+    except Exception:
+        displacement.Delete()
+        raise
+    Save()
+    return {
+        "two_way": True,
+        "displacement_transfer": _entity_summary(displacement),
+        "force_transfer": _entity_summary(force),
+        "snapshot": _system_coupling_snapshot(),
+    }
+
+
+def export_system_coupling_setup(output_path):
+    if not output_path:
+        raise ValueError("output_path must not be empty")
+    output_path = os.path.abspath(os.path.expanduser(output_path))
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    _, setup, _ = _get_system_coupling_context()
+    setup.ExportSCIFile(Path=output_path)
+    return {"output_path": output_path, "exists": os.path.exists(output_path), "snapshot": _system_coupling_snapshot()}
+
+
+def run_system_coupling_solution():
+    snapshot = _system_coupling_snapshot()
+    if snapshot["participant_count"] < 2 or snapshot["data_transfer_count"] < 1:
+        raise RuntimeError(
+            "Coupling setup is incomplete: at least two published participants "
+            "and one data transfer are required before solving"
+        )
+    system, _, _ = _get_system_coupling_context()
+    solution = system.GetComponent(Name="Solution")
+    solution.Update()
+    Save()
+    return {"updated": True, "solution": _stringify(solution), "snapshot": _system_coupling_snapshot()}
+
+
+def create_steady_state_thermal_system(project_dir, project_name="steady_state_thermal", geometry_file="", refresh_model=False):
+    project_dir = os.path.abspath(os.path.expanduser(project_dir))
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir)
+    project_file = os.path.join(project_dir, project_name + ".wbpj")
+
+    Reset()
+    ClearMessages()
+    template = GetTemplate(TemplateName="Steady-State Thermal", Solver="ANSYS")
+    system = template.CreateSystem()
+
+    if geometry_file:
+        geometry_file = os.path.abspath(os.path.expanduser(geometry_file))
+        geometry = system.GetContainer(ComponentName="Geometry")
+        geometry.SetFile(FilePath=geometry_file)
+
+    model = system.GetContainer(ComponentName="Model")
+    if refresh_model:
+        model.Refresh()
+
+    Save(FilePath=project_file, Overwrite=True)
+    return {"project_file": project_file, "project_info": get_project_info()}
+
+
+def create_thermal_bar_demo(project_dir):
+    project_dir = os.path.abspath(os.path.expanduser(project_dir))
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir)
+
+    input_file = os.path.join(project_dir, "thermal_bar.dat")
+    result_file = os.path.join(project_dir, "thermal_nodal_temperatures.txt")
+    project_file = os.path.join(project_dir, "thermal_bar_demo.wbpj")
+    result_no_ext = os.path.splitext(result_file)[0].replace("\\", "/")
+
+    apdl = """/TITLE,Workbench MCP thermal bar demo
+/PREP7
+ET,1,SOLID70
+MP,KXX,1,45
+BLOCK,0,0.1,0,0.02,0,0.02
+ESIZE,0.005
+VMESH,ALL
+FINISH
+
+/SOLU
+ANTYPE,STATIC
+NSEL,S,LOC,X,0
+D,ALL,TEMP,100
+NSEL,S,LOC,X,0.1
+D,ALL,TEMP,20
+ALLSEL,ALL
+SOLVE
+FINISH
+
+/POST1
+SET,LAST
+ALLSEL,ALL
+/OUTPUT,'%s',txt
+PRNSOL,TEMP
+/OUTPUT
+FINISH
+""" % result_no_ext
+
+    with io.open(input_file, "w", encoding="utf-8") as f:
+        f.write(apdl)
+
+    Reset()
+    ClearMessages()
+    template = GetTemplate(TemplateName="Mechanical APDL")
+    system = template.CreateSystem()
+    setup = system.GetContainer(ComponentName="Setup")
+    setup.AddInputFile(FilePath=input_file)
+    Save(FilePath=project_file, Overwrite=True)
+    Update()
+    Save(FilePath=project_file, Overwrite=True)
+
+    temps = []
+    if os.path.exists(result_file):
+        with io.open(result_file, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit():
+                    try:
+                        temps.append(float(parts[1]))
+                    except Exception:
+                        pass
+
+    return {
+        "project_file": project_file,
+        "input_file": input_file,
+        "result_file": result_file,
+        "node_count": len(temps),
+        "min_temperature": min(temps) if temps else None,
+        "max_temperature": max(temps) if temps else None,
+    }
+
+
+def handle_command(command):
+    cmd_id = command.get("id", uuid.uuid4().hex[:8])
+    cmd_type = command.get("type", "")
+    started = time.time()
+
+    try:
+        if cmd_type == "ping":
+            payload = {
+                "version": __version__,
+                "mcp_home": MCP_HOME,
+                "pid": os.getpid(),
+                "commands_processed": _mcp_commands_processed,
+            }
+            return {"id": cmd_id, "success": True, "data": payload, "timestamp": time.time()}
+        if cmd_type == "execute_script":
+            return execute_script(command.get("script", ""), cmd_id)
+        if cmd_type == "get_project_info":
+            return {"id": cmd_id, "success": True, "data": get_project_info(), "timestamp": time.time()}
+        if cmd_type == "open_project":
+            data = open_project(command.get("project_file", ""))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "save_project":
+            data = save_project(command.get("project_file", ""), command.get("overwrite", True))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "update_project":
+            data = update_project()
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "probe_analysis_templates":
+            data = probe_analysis_templates(command.get("analysis_templates", {}))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "create_analysis_system":
+            data = create_analysis_system(
+                command.get("project_dir", ""),
+                command.get("project_name", ""),
+                command.get("analysis_type", ""),
+                command.get("template_candidates", []),
+                command.get("geometry_file", ""),
+                command.get("refresh_model", False),
+                command.get("reset_project", True),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "probe_system_coupling":
+            data = probe_system_coupling()
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "create_cfx_mechanical_fsi_project":
+            data = create_cfx_mechanical_fsi_project(
+                command.get("project_dir", ""),
+                command.get("project_name", "cfx_mechanical_fsi"),
+                command.get("cfx_geometry_file", ""),
+                command.get("mechanical_geometry_file", ""),
+                command.get("overwrite", False),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "connect_system_coupling_participants":
+            data = connect_system_coupling_participants(command.get("system_indices", []))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "get_system_coupling_status":
+            return {"id": cmd_id, "success": True, "data": _system_coupling_snapshot(), "timestamp": time.time()}
+        if cmd_type == "configure_system_coupling_settings":
+            data = configure_system_coupling_settings(
+                command.get("step_size", ""),
+                command.get("end_time", ""),
+                command.get("number_of_steps", 0),
+                command.get("minimum_iterations", 0),
+                command.get("maximum_iterations", 0),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "create_system_coupling_data_transfer":
+            data = create_system_coupling_data_transfer(
+                command.get("name", "Data Transfer"),
+                command.get("source_participant", ""),
+                command.get("source_region", ""),
+                command.get("source_variable", ""),
+                command.get("target_participant", ""),
+                command.get("target_region", ""),
+                command.get("target_variable", ""),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "configure_cfx_mechanical_two_way_fsi":
+            data = configure_cfx_mechanical_two_way_fsi(
+                command.get("cfx_participant", ""),
+                command.get("cfx_region", ""),
+                command.get("cfx_displacement_variable", ""),
+                command.get("cfx_force_variable", ""),
+                command.get("mechanical_participant", ""),
+                command.get("mechanical_region", ""),
+                command.get("mechanical_displacement_variable", ""),
+                command.get("mechanical_force_variable", ""),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "export_system_coupling_setup":
+            data = export_system_coupling_setup(command.get("output_path", ""))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "run_system_coupling_solution":
+            data = run_system_coupling_solution()
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "create_steady_state_thermal_system":
+            data = create_steady_state_thermal_system(
+                command.get("project_dir", ""),
+                command.get("project_name", "steady_state_thermal"),
+                command.get("geometry_file", ""),
+                command.get("refresh_model", False),
+            )
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "create_thermal_bar_demo":
+            data = create_thermal_bar_demo(command.get("project_dir", os.path.join(RUNS_DIR, "thermal_bar_demo_live")))
+            return {"id": cmd_id, "success": True, "data": data, "timestamp": time.time()}
+        if cmd_type == "stop":
+            return {"id": cmd_id, "success": True, "data": {"stopping": True}, "timestamp": time.time()}
+        return {"id": cmd_id, "success": False, "error": "Unknown command type: " + cmd_type, "timestamp": time.time()}
+    except Exception as e:
+        return {
+            "id": cmd_id,
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "elapsed_seconds": round(time.time() - started, 3),
+            "timestamp": time.time(),
+        }
+
+
+def poll_once():
+    global _mcp_commands_processed
+    ensure_dirs()
+    processed = 0
+    try:
+        names = sorted(os.listdir(COMMANDS_DIR))
+    except Exception:
+        return 0
+
+    for name in names:
+        if not name.startswith("cmd_") or not name.endswith(".json"):
+            continue
+        command_path = os.path.join(COMMANDS_DIR, name)
+        try:
+            command = _read_json(command_path)
+        except Exception as e:
+            _log("ERROR", "Failed to read command " + name + ": " + str(e))
+            continue
+
+        cmd_id = command.get("id", name[4:-5])
+        result_path = os.path.join(RESULTS_DIR, cmd_id + ".json")
+        result = handle_command(command)
+        try:
+            _write_json(result_path, result)
+        except Exception as e:
+            _log("ERROR", "Failed to write result " + cmd_id + ": " + str(e))
+
+        try:
+            os.remove(command_path)
+        except Exception:
+            pass
+
+        processed += 1
+        _mcp_commands_processed += 1
+        if command.get("type") == "stop":
+            try:
+                with io.open(STOP_FILE, "w", encoding="utf-8") as f:
+                    f.write("stop")
+            except Exception:
+                pass
+    return processed
+
+
+def mcp_stop():
+    try:
+        with io.open(STOP_FILE, "w", encoding="utf-8") as f:
+            f.write("stop")
+    except Exception:
+        pass
+    write_status("stopped", "Stop requested")
+    print("Workbench MCP: stop requested")
+
+
+def mcp_status():
+    print("")
+    print("=" * 60)
+    print("Ansys Workbench MCP Bridge v" + __version__)
+    print("=" * 60)
+    print("Home:         " + MCP_HOME)
+    print("Commands dir: " + COMMANDS_DIR)
+    print("Results dir:  " + RESULTS_DIR)
+    print("Processed:    " + str(_mcp_commands_processed))
+    if _mcp_start_time:
+        print("Uptime:       " + str(int(time.time() - _mcp_start_time)) + "s")
+    print("")
+    print("Commands:")
+    print("  mcp_loop()    - Start blocking file-IPC loop")
+    print("  poll_once()   - Process one command batch")
+    print("  mcp_stop()    - Stop loop")
+    print("  mcp_status()  - Show this status")
+    print("=" * 60)
+
+
+def mcp_loop(sleep_interval=0.1):
+    global _mcp_running, _mcp_commands_processed, _mcp_start_time
+    ensure_dirs()
+    if os.path.exists(STOP_FILE):
+        try:
+            os.remove(STOP_FILE)
+        except Exception:
+            pass
+
+    _mcp_running = True
+    _mcp_commands_processed = 0
+    _mcp_start_time = time.time()
+    write_status("running", "Polling active")
+    _log("INFO", "Bridge loop started")
+    print("Workbench MCP: listening for commands in " + COMMANDS_DIR)
+
+    last_status_time = 0.0
+    cleanup_time = 0.0
+    try:
+        while True:
+            now = time.time()
+            if now - last_status_time >= 2.0:
+                write_status("running", "Polling active")
+                last_status_time = now
+            if now - cleanup_time >= 30.0:
+                _cleanup_stale_commands()
+                cleanup_time = now
+            if os.path.exists(STOP_FILE):
+                try:
+                    os.remove(STOP_FILE)
+                except Exception:
+                    pass
+                break
+            poll_once()
+            time.sleep(max(0.02, float(sleep_interval)))
+    except KeyboardInterrupt:
+        print("Workbench MCP: stopped by keyboard interrupt")
+    except Exception as e:
+        _log("ERROR", "mcp_loop: " + str(e))
+        _log("ERROR", traceback.format_exc())
+    _mcp_running = False
+    write_status("stopped", "Polling stopped")
+    _log("INFO", "Bridge loop stopped")
+    print("Workbench MCP: loop stopped")
+
+
+ensure_dirs()
+write_status("ready", "Bridge journal loaded")
+print("")
+print("=" * 60)
+print("Ansys Workbench MCP Bridge v" + __version__)
+print("=" * 60)
+print("Home: " + MCP_HOME)
+print("Start: mcp_loop()")
+print("Stop:  mcp_stop()")
+print("=" * 60)
+
+mcp_loop()

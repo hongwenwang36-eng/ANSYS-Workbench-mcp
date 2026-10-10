@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+.venu/
+
+# IDE
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+
+# Runtime state (created automatically; never commit generated jobs or logs)
+commands/
+results/
+scripts/
+runs/
+icem/
+status.json
+mcp.log
+stop.flag
+
+# Test/cache output
+.pytest_cache/
+.coverage

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "ansys-workbench": {
+      "command": "D:\\ansys-workbench-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["D:\\ansys-workbench-mcp\\mcp_server.py"],
+      "cwd": "D:\\ansys-workbench-mcp",
+      "env": {
+        "ANSYS_WORKBENCH_MCP_HOME": "D:\\ansys-workbench-mcp",
+        "ANSYS_RUNWB2": "D:\\Program Files\\ANSYS Inc\\v251\\Framework\\bin\\Win64\\RunWB2.exe",
+        "ANSYS_MECHANICAL": "D:\\Program Files\\ANSYS Inc\\v251\\aisol\\bin\\winx64\\AnsysWBU.exe",
+        "ANSYS_MAPDL": "D:\\Program Files\\ANSYS Inc\\v251\\ansys\\bin\\winx64\\ANSYS251.exe",
+        "ANSYS_FLUENT": "D:\\Program Files\\ANSYS Inc\\v251\\fluent\\ntbin\\win64\\fluent.exe",
+        "ANSYS_CFX_SOLVE": "D:\\Program Files\\ANSYS Inc\\v251\\CFX\\bin\\cfx5solve.exe",
+        "ANSYS_CFX_PRE": "D:\\Program Files\\ANSYS Inc\\v251\\CFX\\bin\\cfx5pre.exe",
+        "ANSYS_ICEM_CFD": "D:\\Program Files\\ANSYS Inc\\v251\\icemcfd\\win64_amd\\bin\\icemcfd.bat"
+      }
+    }
+  }
+}
