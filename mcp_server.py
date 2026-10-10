@@ -158,6 +158,41 @@ def _icem_command(arguments: list[str]) -> str:
     return f"{quote_for_cmd(comspec)} /d /v:off /c call {launcher}"
 
 
+def _icem_environment(batch: bool) -> dict[str, str]:
+    """Build an ICEM environment that prioritizes Ansys runtime DLLs."""
+    env = os.environ.copy()
+    preferred_paths: list[str] = []
+    try:
+        ansys_root = ICEM_CFD.parents[3]
+    except IndexError:
+        ansys_root = None
+
+    if ansys_root is not None:
+        for relative_path in [
+            Path("aisol") / "bin" / "winx64",
+            Path("Framework") / "bin" / "Win64",
+        ]:
+            candidate = ansys_root / relative_path
+            if candidate.is_dir():
+                preferred_paths.append(str(candidate))
+
+    inherited_paths = env.get("PATH", "").split(os.pathsep)
+    ordered_paths: list[str] = []
+    seen_paths: set[str] = set()
+    for path in [*preferred_paths, *inherited_paths]:
+        if not path:
+            continue
+        path_key = os.path.normcase(os.path.normpath(path))
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+        ordered_paths.append(path)
+    env["PATH"] = os.pathsep.join(ordered_paths)
+    env["ANSYS_ICEM_MCP_HOME"] = str(ICEM_HOME)
+    env["ICEM_MCP_BATCH"] = "1" if batch else "0"
+    return env
+
+
 def _analysis_key(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(" ", "_")
 
@@ -191,7 +226,12 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _run_process(args: list[str] | str, cwd: Path, timeout_seconds: int) -> dict[str, Any]:
+def _run_process(
+    args: list[str] | str,
+    cwd: Path,
+    timeout_seconds: int,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     started = time.time()
     proc = subprocess.run(
         args,
@@ -200,6 +240,7 @@ def _run_process(args: list[str] | str, cwd: Path, timeout_seconds: int) -> dict
         capture_output=True,
         timeout=timeout_seconds,
         check=False,
+        env=env,
     )
     return {
         "returncode": proc.returncode,
@@ -500,9 +541,7 @@ def start_icem_bridge(
     if startup_project:
         arguments.append(startup_project)
 
-    env = os.environ.copy()
-    env["ANSYS_ICEM_MCP_HOME"] = str(ICEM_HOME)
-    env["ICEM_MCP_BATCH"] = "1" if batch else "0"
+    env = _icem_environment(batch)
     try:
         command = _icem_command(arguments)
     except ValueError as exc:
@@ -696,7 +735,7 @@ exit 1
         return _json({"ok": False, "error": str(exc)})
 
     try:
-        process_result = _run_process(command, cwd, timeout_seconds)
+        process_result = _run_process(command, cwd, timeout_seconds, env=_icem_environment(batch=True))
     except subprocess.TimeoutExpired:
         return _json(
             {
