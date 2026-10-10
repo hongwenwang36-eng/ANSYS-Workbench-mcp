@@ -94,6 +94,32 @@ class IcemSupportTests(unittest.TestCase):
         self.assertIn("icem_bridge_script", report)
         self.assertEqual(report["version"], "0.3.0")
 
+    def test_documented_bridge_tools_are_defined(self) -> None:
+        tool_names = [
+            "start_icem_bridge",
+            "stop_icem_bridge",
+            "check_icem_connection",
+            "execute_icem_script",
+            "get_icem_session_info",
+            "list_icem_commands",
+            "run_icem_replay",
+            "start_workbench_bridge",
+            "stop_workbench_bridge",
+            "check_workbench_connection",
+            "execute_workbench_script",
+            "get_project_info",
+            "open_project",
+            "save_project",
+            "update_project",
+            "probe_workbench_analysis_templates_live",
+            "create_workbench_analysis_system_live",
+            "create_random_vibration_system_live",
+        ]
+        for tool_name in tool_names:
+            with self.subTest(tool_name=tool_name):
+                self.assertTrue(callable(getattr(mcp_server, tool_name, None)))
+
 
 if __name__ == "__main__":
     unittest.main()
+
