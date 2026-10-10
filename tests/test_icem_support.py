@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -32,6 +33,30 @@ class IcemSupportTests(unittest.TestCase):
     def test_icem_command_quotes_cmd_metacharacters(self) -> None:
         command = mcp_server._icem_command(["D:\\cases\\mesh&quality.rpl"])
         self.assertIn('"D:\\cases\\mesh&quality.rpl"', command)
+
+    def test_icem_environment_prioritizes_ansys_runtime_dlls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ansys_root = Path(temp_dir) / "v251"
+            launcher = ansys_root / "icemcfd" / "win64_amd" / "bin" / "icemcfd.bat"
+            aisol_bin = ansys_root / "aisol" / "bin" / "winx64"
+            framework_bin = ansys_root / "Framework" / "bin" / "Win64"
+            launcher.parent.mkdir(parents=True)
+            aisol_bin.mkdir(parents=True)
+            framework_bin.mkdir(parents=True)
+            launcher.touch()
+
+            with mock.patch.multiple(
+                mcp_server,
+                ICEM_CFD=launcher,
+                ICEM_HOME=ansys_root / "icem-mcp",
+            ):
+                with mock.patch.dict(os.environ, {"PATH": r"C:\polluted\runtime"}):
+                    env = mcp_server._icem_environment(batch=True)
+
+            path_entries = env["PATH"].split(os.pathsep)
+            self.assertEqual(path_entries[:2], [str(aisol_bin), str(framework_bin)])
+            self.assertEqual(env["ANSYS_ICEM_MCP_HOME"], str(ansys_root / "icem-mcp"))
+            self.assertEqual(env["ICEM_MCP_BATCH"], "1")
 
     def test_send_icem_command_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
