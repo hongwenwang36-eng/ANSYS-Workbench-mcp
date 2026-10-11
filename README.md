@@ -5,7 +5,7 @@
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-让 Codex 或其他 MCP 客户端直接控制 **Ansys Workbench、System Coupling、ICEM CFD、MAPDL、Fluent 和 CFX**。
+让 Codex 或其他 MCP 客户端直接控制 **Ansys Workbench**。
 
 项目使用 Ansys 官方支持的 Journal、Workbench Scripting、Tcl/Replay 和批处理入口，不依赖鼠标点击或屏幕识别。
 
