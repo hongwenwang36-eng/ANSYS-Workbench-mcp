@@ -1,5 +1,11 @@
 # Ansys Workbench MCP
 
+<div align="center">
+
+[English](README.en.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [한국어](README.ko.md) | [日本語](README.ja.md)
+
+</div>
+
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows)
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
