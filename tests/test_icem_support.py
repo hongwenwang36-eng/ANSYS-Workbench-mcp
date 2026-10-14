@@ -118,11 +118,12 @@ class IcemSupportTests(unittest.TestCase):
         report = json.loads(mcp_server.check_ansys_installation())
         self.assertIn("icem_cfd", report)
         self.assertIn("icem_bridge_script", report)
-        self.assertEqual(report["version"], "0.4.0")
+        self.assertEqual(report["version"], "0.5.0")
 
     def test_documented_bridge_tools_are_defined(self) -> None:
         expected_tools = {
             "check_ansys_installation",
+            "write_ansys_script",
             "check_icem_installation",
             "start_icem_bridge",
             "stop_icem_bridge",
@@ -161,6 +162,9 @@ class IcemSupportTests(unittest.TestCase):
             "create_cfx_flow_system_live",
             "create_fluent_flow_system_live",
             "create_thermal_bar_demo_live",
+            "run_spaceclaim_script",
+            "run_cfx_pre_session",
+            "run_cfx_post_session",
             "run_workbench_journal",
             "create_workbench_analysis_system",
             "create_steady_state_thermal_system",

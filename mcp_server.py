@@ -13,6 +13,7 @@ The server supports two modes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -25,7 +26,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 SERVER_ROOT = Path(__file__).resolve().parent
 DEFAULT_MCP_HOME = SERVER_ROOT
@@ -51,19 +52,34 @@ DEFAULT_RUNWB2 = r"D:\Program Files\ANSYS Inc\v251\Framework\bin\Win64\RunWB2.ex
 DEFAULT_MECHANICAL = r"D:\Program Files\ANSYS Inc\v251\aisol\bin\winx64\AnsysWBU.exe"
 DEFAULT_MAPDL = r"D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe"
 DEFAULT_FLUENT = r"D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe"
+DEFAULT_SPACECLAIM = r"D:\Program Files\ANSYS Inc\v251\scdm\SpaceClaim.exe"
 DEFAULT_CFX_SOLVE = r"D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe"
 DEFAULT_CFX_PRE = r"D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe"
+DEFAULT_CFX_POST = r"D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5post.exe"
 DEFAULT_ICEM_CFD = r"D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat"
 
 RUNWB2 = Path(os.environ.get("ANSYS_RUNWB2", DEFAULT_RUNWB2))
 MECHANICAL = Path(os.environ.get("ANSYS_MECHANICAL", DEFAULT_MECHANICAL))
 MAPDL = Path(os.environ.get("ANSYS_MAPDL", DEFAULT_MAPDL))
 FLUENT = Path(os.environ.get("ANSYS_FLUENT", DEFAULT_FLUENT))
+SPACECLAIM = Path(os.environ.get("ANSYS_SPACECLAIM", DEFAULT_SPACECLAIM))
 CFX_SOLVE = Path(os.environ.get("ANSYS_CFX_SOLVE", DEFAULT_CFX_SOLVE))
 CFX_PRE = Path(os.environ.get("ANSYS_CFX_PRE", DEFAULT_CFX_PRE))
+CFX_POST = Path(os.environ.get("ANSYS_CFX_POST", DEFAULT_CFX_POST))
 ICEM_CFD = Path(os.environ.get("ANSYS_ICEM_CFD", DEFAULT_ICEM_CFD))
 
 DEFAULT_TIMEOUT = 30.0
+
+ANSYS_SCRIPT_SUFFIXES = {
+    ".ccl",
+    ".cse",
+    ".jou",
+    ".pre",
+    ".py",
+    ".rpl",
+    ".tcl",
+    ".wbjn",
+}
 
 WORKBENCH_ANALYSIS_TEMPLATES: dict[str, list[dict[str, str]]] = {
     "steady_state_thermal": [{"template_name": "Steady-State Thermal", "solver": "ANSYS"}],
@@ -376,6 +392,52 @@ def _read_tail(path: Path, limit: int = 12000) -> str:
         return ""
 
 
+def _path_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"exists": False, "size_bytes": None, "modified_time_ns": None}
+    stat = path.stat()
+    return {
+        "exists": True,
+        "size_bytes": stat.st_size if path.is_file() else None,
+        "modified_time_ns": stat.st_mtime_ns,
+    }
+
+
+def _state_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    if not after["exists"]:
+        return False
+    if not before["exists"]:
+        return True
+    return (
+        before["size_bytes"] != after["size_bytes"]
+        or before["modified_time_ns"] != after["modified_time_ns"]
+    )
+
+
+def _expected_output_status(
+    value: str,
+    before: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return existence and freshness metadata for an optional expected artifact."""
+    if not value.strip():
+        return {
+            "required": False,
+            "path": "",
+            "exists": None,
+            "size_bytes": None,
+            "modified_time_ns": None,
+            "updated": None,
+        }
+    path = _as_path(value)
+    current = _path_state(path)
+    return {
+        "required": True,
+        "path": str(path),
+        **current,
+        "updated": _state_changed(before, current) if before is not None else None,
+    }
+
+
 def _clear_stale_icem_commands() -> None:
     """Remove only MCP-generated command descriptors from an earlier bridge."""
     for path in ICEM_COMMANDS_DIR.glob("cmd_*.tcl"):
@@ -455,10 +517,14 @@ def check_ansys_installation() -> str:
         "mapdl_exists": MAPDL.exists(),
         "fluent": str(FLUENT),
         "fluent_exists": FLUENT.exists(),
+        "spaceclaim": str(SPACECLAIM),
+        "spaceclaim_exists": SPACECLAIM.exists(),
         "cfx_solve": str(CFX_SOLVE),
         "cfx_solve_exists": CFX_SOLVE.exists(),
         "cfx_pre": str(CFX_PRE),
         "cfx_pre_exists": CFX_PRE.exists(),
+        "cfx_post": str(CFX_POST),
+        "cfx_post_exists": CFX_POST.exists(),
         "icem_cfd": str(ICEM_CFD),
         "icem_cfd_exists": ICEM_CFD.exists(),
         "icem_bridge_script": str(ICEM_BRIDGE_SCRIPT),
@@ -470,6 +536,49 @@ def check_ansys_installation() -> str:
         "server_root": str(SERVER_ROOT),
     }
     return _json(data)
+
+
+@mcp.tool()
+def write_ansys_script(output_path: str, content: str, overwrite: bool = False) -> str:
+    """Write an Ansys automation script with guarded extension and overwrite checks.
+
+    Supported extensions are .wbjn, .py, .tcl, .rpl, .jou, .ccl, .pre, and
+    .cse. Existing files are preserved unless overwrite=True.
+    """
+    path = _as_path(output_path)
+    suffix = path.suffix.lower()
+    if suffix not in ANSYS_SCRIPT_SUFFIXES:
+        return _json(
+            {
+                "ok": False,
+                "error": f"Unsupported script extension: {suffix or '(none)'}",
+                "supported_extensions": sorted(ANSYS_SCRIPT_SUFFIXES),
+            }
+        )
+    if "\x00" in content:
+        return _json({"ok": False, "error": "Script content cannot contain NUL bytes"})
+    if path.exists() and not overwrite:
+        return _json(
+            {
+                "ok": False,
+                "error": f"Refusing to overwrite existing file without overwrite=True: {path}",
+            }
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+    payload = path.read_bytes()
+    return _json(
+        {
+            "ok": True,
+            "path": str(path),
+            "extension": suffix,
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    )
 
 
 @mcp.tool()
@@ -1319,13 +1428,196 @@ def create_thermal_bar_demo_live(
 
 
 @mcp.tool()
+def run_spaceclaim_script(
+    script_path: str,
+    workdir: str = "",
+    script_api: str = "V251",
+    headless: bool = True,
+    expected_output: str = "",
+    extra_args: str = "",
+    timeout_seconds: int = 600,
+) -> str:
+    """Run a SpaceClaim Python script and optionally verify its expected artifact."""
+    if not SPACECLAIM.exists():
+        return _json({"ok": False, "error": f"SpaceClaim not found: {SPACECLAIM}"})
+
+    script = _as_path(script_path)
+    if not script.exists():
+        return _json({"ok": False, "error": f"SpaceClaim script not found: {script}"})
+    if script.suffix.lower() != ".py":
+        return _json({"ok": False, "error": "SpaceClaim script must use the .py extension"})
+
+    cwd = _as_path(workdir) if workdir else script.parent
+    cwd.mkdir(parents=True, exist_ok=True)
+    log_file = cwd / f"{script.stem}.spaceclaim.log"
+    args = [
+        str(SPACECLAIM),
+        f"/Headless={'True' if headless else 'False'}",
+        "/Splash=False",
+        f"/RunScript={script}",
+        f"/ScriptAPI={script_api}",
+        f"/ScriptOutput={log_file}",
+        "/ExitAfterScript=True",
+    ]
+    args.extend(_split_extra_args(extra_args))
+    artifact_before = _expected_output_status(expected_output)
+
+    try:
+        result = _run_process(args, cwd, timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return _json({"ok": False, "error": f"Timed out after {timeout_seconds}s", "script": str(script)})
+
+    artifact = _expected_output_status(expected_output, before=artifact_before)
+    ok = result["returncode"] == 0 and (
+        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+    )
+    return _json(
+        {
+            "ok": ok,
+            "script": str(script),
+            "workdir": str(cwd),
+            "command": args,
+            "log_file": str(log_file),
+            "log_tail": _read_tail(log_file),
+            "expected_output": artifact,
+            "process": result,
+        }
+    )
+
+
+@mcp.tool()
+def run_cfx_pre_session(
+    session_file: str,
+    workdir: str = "",
+    expected_output: str = "",
+    extra_args: str = "",
+    timeout_seconds: int = 900,
+) -> str:
+    """Run a CFX-Pre session in batch mode and optionally verify a .cfx or .def output."""
+    if not CFX_PRE.exists():
+        return _json({"ok": False, "error": f"CFX-Pre not found: {CFX_PRE}"})
+
+    session = _as_path(session_file)
+    if not session.exists():
+        return _json({"ok": False, "error": f"CFX-Pre session not found: {session}"})
+    cwd = _as_path(workdir) if workdir else session.parent
+    cwd.mkdir(parents=True, exist_ok=True)
+    args = [str(CFX_PRE), "-batch", str(session)]
+    args.extend(_split_extra_args(extra_args))
+    artifact_before = _expected_output_status(expected_output)
+
+    try:
+        result = _run_process(args, cwd, timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return _json({"ok": False, "error": f"Timed out after {timeout_seconds}s", "session_file": str(session)})
+
+    artifact = _expected_output_status(expected_output, before=artifact_before)
+    ok = result["returncode"] == 0 and (
+        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+    )
+    return _json(
+        {
+            "ok": ok,
+            "session_file": str(session),
+            "workdir": str(cwd),
+            "command": args,
+            "expected_output": artifact,
+            "process": result,
+        }
+    )
+
+
+@mcp.tool()
+def run_cfx_post_session(
+    session_file: str,
+    workdir: str = "",
+    result_file: str = "",
+    state_file: str = "",
+    rendering: str = "software",
+    expected_output: str = "",
+    extra_args: str = "",
+    timeout_seconds: int = 900,
+) -> str:
+    """Run a CFD-Post .cse session in batch mode and verify an optional output.
+
+    rendering must be software or gpu. result_file and state_file are optional
+    initial inputs; a session may also load its own result/state files.
+    """
+    if not CFX_POST.exists():
+        return _json({"ok": False, "error": f"CFD-Post not found: {CFX_POST}"})
+
+    session = _as_path(session_file)
+    if not session.exists():
+        return _json({"ok": False, "error": f"CFD-Post session not found: {session}"})
+
+    mode = rendering.strip().lower()
+    render_flags = {
+        "software": "-batch-software-rendering",
+        "gpu": "-batch-gpu-rendering",
+    }
+    if mode not in render_flags:
+        return _json({"ok": False, "error": "rendering must be software or gpu"})
+
+    cwd = _as_path(workdir) if workdir else session.parent
+    cwd.mkdir(parents=True, exist_ok=True)
+    args = [str(CFX_POST)]
+    loaded_result = ""
+    loaded_state = ""
+    if result_file:
+        result_path = _as_path(result_file)
+        if not result_path.exists():
+            return _json({"ok": False, "error": f"CFX result file not found: {result_path}"})
+        loaded_result = str(result_path)
+        args.extend(["-results", loaded_result])
+    if state_file:
+        state_path = _as_path(state_file)
+        if not state_path.exists():
+            return _json({"ok": False, "error": f"CFD-Post state file not found: {state_path}"})
+        loaded_state = str(state_path)
+        args.extend(["-state", loaded_state])
+    args.extend([render_flags[mode], str(session)])
+    args.extend(_split_extra_args(extra_args))
+    artifact_before = _expected_output_status(expected_output)
+
+    try:
+        result = _run_process(args, cwd, timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return _json({"ok": False, "error": f"Timed out after {timeout_seconds}s", "session_file": str(session)})
+
+    artifact = _expected_output_status(expected_output, before=artifact_before)
+    ok = result["returncode"] == 0 and (
+        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+    )
+    return _json(
+        {
+            "ok": ok,
+            "session_file": str(session),
+            "workdir": str(cwd),
+            "rendering": mode,
+            "result_file": loaded_result,
+            "state_file": loaded_state,
+            "command": args,
+            "expected_output": artifact,
+            "process": result,
+        }
+    )
+
+
+@mcp.tool()
 def run_workbench_journal(
     journal_path: str,
     workdir: str = "",
     batch: bool = True,
+    log_file: str = "",
+    completion_marker: str = "",
+    expected_output: str = "",
     timeout_seconds: int = 600,
 ) -> str:
-    """Run an Ansys Workbench journal through RunWB2 as a direct batch job."""
+    """Run a Workbench journal and optionally verify its log marker and output.
+
+    A non-empty completion_marker requires log_file. expected_output can point
+    to a converged project, result, or iteration report that must exist.
+    """
     if not RUNWB2.exists():
         return _json({"ok": False, "error": f"RunWB2 not found: {RUNWB2}"})
 
@@ -1335,12 +1627,45 @@ def run_workbench_journal(
 
     cwd = _as_path(workdir) if workdir else journal.parent
     cwd.mkdir(parents=True, exist_ok=True)
+    if completion_marker and not log_file:
+        return _json({"ok": False, "error": "completion_marker requires log_file"})
+    log_path = _as_path(log_file) if log_file else None
+    log_before = _path_state(log_path) if log_path else None
+    artifact_before = _expected_output_status(expected_output)
 
     try:
         result = _run_process(_workbench_command(journal, batch=batch), cwd, timeout_seconds)
-        return _json({"ok": result["returncode"] == 0, "journal": str(journal), **result})
     except subprocess.TimeoutExpired:
         return _json({"ok": False, "error": f"Timed out after {timeout_seconds}s", "journal": str(journal)})
+
+    log_text = _read_tail(log_path) if log_path else ""
+    log_after = _path_state(log_path) if log_path else None
+    log_updated = _state_changed(log_before, log_after) if log_before and log_after else None
+    marker_seen = completion_marker in log_text if completion_marker else None
+    artifact = _expected_output_status(expected_output, before=artifact_before)
+    ok = (
+        result["returncode"] == 0
+        and (marker_seen is not False)
+        and (log_updated is not False if completion_marker else True)
+        and (
+            not artifact["required"]
+            or (artifact["exists"] is True and artifact["updated"] is True)
+        )
+    )
+    return _json(
+        {
+            "ok": ok,
+            "journal": str(journal),
+            "workdir": str(cwd),
+            "log_file": str(log_path) if log_path else "",
+            "completion_marker": completion_marker,
+            "marker_seen": marker_seen,
+            "log_updated": log_updated,
+            "log_tail": log_text,
+            "expected_output": artifact,
+            **result,
+        }
+    )
 
 
 @mcp.tool()

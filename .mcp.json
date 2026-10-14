@@ -10,8 +10,10 @@
         "ANSYS_MECHANICAL": "D:\\Program Files\\ANSYS Inc\\v251\\aisol\\bin\\winx64\\AnsysWBU.exe",
         "ANSYS_MAPDL": "D:\\Program Files\\ANSYS Inc\\v251\\ansys\\bin\\winx64\\ANSYS251.exe",
         "ANSYS_FLUENT": "D:\\Program Files\\ANSYS Inc\\v251\\fluent\\ntbin\\win64\\fluent.exe",
+        "ANSYS_SPACECLAIM": "D:\\Program Files\\ANSYS Inc\\v251\\scdm\\SpaceClaim.exe",
         "ANSYS_CFX_SOLVE": "D:\\Program Files\\ANSYS Inc\\v251\\CFX\\bin\\cfx5solve.exe",
         "ANSYS_CFX_PRE": "D:\\Program Files\\ANSYS Inc\\v251\\CFX\\bin\\cfx5pre.exe",
+        "ANSYS_CFX_POST": "D:\\Program Files\\ANSYS Inc\\v251\\CFX\\bin\\cfx5post.exe",
         "ANSYS_ICEM_CFD": "D:\\Program Files\\ANSYS Inc\\v251\\icemcfd\\win64_amd\\bin\\icemcfd.bat"
       }
     }

@@ -11,7 +11,7 @@
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Codex 또는 다른 MCP 클라이언트에서 **Ansys Workbench**를 직접 제어합니다.
+Codex 또는 다른 MCP 클라이언트에서 **SpaceClaim, Ansys Workbench, System Coupling, ICEM CFD, MAPDL, Fluent, CFX-Pre, CFX Solver 및 CFD-Post**를 직접 제어합니다.
 
 이 프로젝트는 마우스 클릭이나 화면 인식에 의존하지 않고 Ansys가 공식 지원하는 Journal, Workbench Scripting, Tcl/Replay 및 배치 실행 인터페이스를 사용합니다.
 
@@ -22,11 +22,12 @@ Codex 또는 다른 MCP 클라이언트에서 **Ansys Workbench**를 직접 제�
 
 | 모듈 | 기능 |
 | --- | --- |
+| 스크립트 및 SpaceClaim | `.wbjn/.py/.tcl/.rpl/.jou/.ccl/.pre/.cse` 파일을 안전하게 작성하고 SpaceClaim Python을 batch 모드로 실행 |
 | Workbench | bridge 시작/종료, 스크립트 실행, 프로젝트 조회/열기/저장/업데이트, 해석 시스템 생성 |
 | ICEM CFD | GUI 또는 batch 세션 시작, Tcl/Replay 실행, 명령 검색, Replay 파일 실행 |
 | Mechanical / MAPDL | 열, 구조 및 동역학 시스템 생성, APDL 입력 파일 직접 실행 |
 | Fluent | journal/TUI 직접 실행, 호환되는 Workbench 템플릿이 있으면 시스템 생성 |
-| CFX | Workbench CFX 시스템 생성 및 `.def` 파일 직접 실행 |
+| CFX | CFX-Pre session, CFX Solver `.def`, CFD-Post `.cse`를 batch 모드로 실행 |
 | System Coupling / FSI | CFX–Transient Structural 양방향 유체-구조 연성 프로젝트 생성, 참여자 연결, 전송 및 솔버 제어 설정, 실행 또는 내보내기 |
 
 지원되는 Workbench 시스템은 Steady-State Thermal, Transient Thermal, Static Structural, Transient Structural, Modal, Harmonic Response, Response Spectrum, Random Vibration, CFX, System Coupling 및 설치된 Fluent 템플릿입니다.
@@ -38,7 +39,7 @@ flowchart LR
     A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
     B -->|JSON file IPC| C[Workbench bridge journal]
     B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[MAPDL / Fluent / CFX]
+    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
     C --> F[Ansys Workbench / System Coupling]
     D --> G[ICEM CFD]
 ```
@@ -78,8 +79,10 @@ ANSYS_RUNWB2 = 'D:\Program Files\ANSYS Inc\v251\Framework\bin\Win64\RunWB2.exe'
 ANSYS_MECHANICAL = 'D:\Program Files\ANSYS Inc\v251\aisol\bin\winx64\AnsysWBU.exe'
 ANSYS_MAPDL = 'D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe'
 ANSYS_FLUENT = 'D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe'
+ANSYS_SPACECLAIM = 'D:\Program Files\ANSYS Inc\v251\scdm\SpaceClaim.exe'
 ANSYS_CFX_SOLVE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe'
 ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
+ANSYS_CFX_POST = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5post.exe'
 ANSYS_ICEM_CFD = 'D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat'
 ```
 
@@ -120,6 +123,10 @@ save_project
 ```
 
 상주 bridge가 필요 없는 일회성 작업에는 `run_workbench_journal`, `create_workbench_analysis_system` 또는 `create_and_run_thermal_bar_demo`를 사용할 수 있습니다.
+
+### 형상에서 CFX 평형 위치까지의 전체 워크플로
+
+새 실행 도구는 형상부터 평형 반복까지 연결합니다. `write_ansys_script`와 `run_spaceclaim_script`로 형상을 만들고, ICEM bridge 또는 Replay로 메시를 생성하며, `run_cfx_pre_session`으로 설정과 `.def`를 만들고, `run_cfx_solver`로 해석한 뒤 `run_cfx_post_session`으로 하중, 모멘트 및 필드 데이터를 내보냅니다. 외부 반복은 `run_workbench_journal`로 매개변수를 갱신하고 Newton-Raphson 또는 감쇠 반복을 수행할 수 있습니다. 새 출력과 로그 표시 검사를 통해 오래된 파일을 새 반복의 성공으로 오인하지 않습니다.
 
 ### CFX–Mechanical 양방향 FSI
 
@@ -178,17 +185,20 @@ run_icem_replay(
 ```text
 run_mapdl_input(input_file="D:/cases/model.dat")
 run_fluent_journal(journal_path="D:/cases/run.jou")
+run_cfx_pre_session(session_file="D:/cases/setup.pre", expected_output="D:/cases/model.def")
 run_cfx_solver(definition_file="D:/cases/model.def")
+run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/model.res")
 ```
 
 ## MCP 도구
 
 <details>
-<summary>46개 도구 모두 보기</summary>
+<summary>50개 도구 모두 보기</summary>
 
 | 도구 | 설명 |
 | --- | --- |
 | `check_ansys_installation` | Ansys 실행 파일 및 bridge 경로 확인 |
+| `write_ansys_script` | 지원되는 Ansys 스크립트 파일을 안전하게 작성하며 기본적으로 덮어쓰기를 금지 |
 | `check_icem_installation` | ICEM CFD 및 Tcl bridge 확인 |
 | `start_icem_bridge` | ICEM CFD 상주 세션 시작 |
 | `stop_icem_bridge` | ICEM CFD 상주 세션 종료 |
@@ -227,7 +237,10 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 | `create_cfx_flow_system_live` | CFX 시스템 생성 |
 | `create_fluent_flow_system_live` | Fluent 시스템 생성 시도 |
 | `create_thermal_bar_demo_live` | 열 해석 데모 생성 및 실행 |
-| `run_workbench_journal` | Workbench journal을 batch 모드로 실행 |
+| `run_spaceclaim_script` | SpaceClaim Python을 batch 모드로 실행하고 형상 출력 검증 |
+| `run_cfx_pre_session` | CFX-Pre session을 batch 모드로 실행하고 `.cfx/.def` 출력 검증 |
+| `run_cfx_post_session` | CFD-Post `.cse`를 batch 모드로 실행하고 내보낸 파일 검증 |
+| `run_workbench_journal` | Workbench journal을 batch 모드로 실행하고 로그 표시와 결과 파일을 선택적으로 검증 |
 | `create_workbench_analysis_system` | 해석 시스템을 batch 모드로 생성 |
 | `create_steady_state_thermal_system` | Steady-State Thermal 시스템을 batch 모드로 생성 |
 | `run_mapdl_input` | MAPDL 입력 파일 실행 |
@@ -249,18 +262,21 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 
 다음 항목은 Ansys 2025 R1 실제 설치 환경에서 검증되었습니다.
 
-- MCP 도구 46개와 리소스 3개 등록
+- MCP 도구 50개와 리소스 3개 등록
 - Workbench bridge 시작/종료, 스크립트 실행, 프로젝트 조회/열기/저장/업데이트
 - Steady-State Thermal, Transient Thermal, Static Structural, Transient Structural, Modal, Harmonic Response, Response Spectrum, Random Vibration 및 CFX 시스템 생성
 - System Coupling 템플릿, CFX/Transient Structural 참여자 연결, 세 시스템 FSI 프로젝트 저장
 - Workbench 및 MAPDL 열 해석: 노드 525개, 20–100 °C, MAPDL 오류 0개
 - Fluent `3ddp` journal 헤드리스 실행
 - ICEM CFD bridge, Tcl/Replay, 명령 검색 및 batch 모드
+- SpaceClaim, CFX-Pre 및 CFD-Post batch 실행과 새 출력 검사
+- 실제 `.res` 파일에서 PAD 압력, 좌표 및 면 연결 데이터를 내보내는 CFD-Post `.cse`
 
 현재 제한 사항:
 
 - 테스트한 Workbench 설치에서 일반적인 Fluent 템플릿을 찾지 못했지만 `run_fluent_journal`은 검증되었습니다.
 - `run_cfx_solver`의 경로 및 호출 로직은 확인했으나 전체 해석에는 사용자가 제공하는 유효한 `.def` 파일이 필요합니다.
+- MCP는 전체 실행 체인을 제공하지만 형상 매개변수, 경계 조건, 수렴 기준 또는 Newton-Raphson Jacobian을 추측하지 않습니다. 실제 모델에 맞게 검증된 스크립트에서 정의해야 합니다.
 - 양방향 전송 및 연성 해석에는 실제 CFX/Mechanical 메시, System Coupling 영역 및 변수가 필요합니다. 빈 프로젝트는 시스템 토폴로지만 검증하며 실제 물리 사례를 대신할 수 없습니다.
 
 ## 문제 해결
@@ -279,7 +295,7 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-테스트는 README, 등록된 도구 46개, 리소스 3개, bridge 버전 일치 및 ICEM IPC 동작을 확인합니다.
+테스트는 README, 등록된 도구 50개, 리소스 3개, bridge 버전 일치, 안전한 스크립트 작성, CFX 전후처리 명령 및 ICEM IPC 동작을 확인합니다.
 
 ## 라이선스
 

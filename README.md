@@ -11,7 +11,7 @@
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-让 Codex 或其他 MCP 客户端直接控制 **Ansys Workbench**。
+让 Codex 或其他 MCP 客户端直接控制 **SpaceClaim、Ansys Workbench、System Coupling、ICEM CFD、MAPDL、Fluent、CFX-Pre、CFX Solver 和 CFD-Post**。
 
 项目使用 Ansys 官方支持的 Journal、Workbench Scripting、Tcl/Replay 和批处理入口，不依赖鼠标点击或屏幕识别。
 
@@ -22,11 +22,12 @@
 
 | 模块 | 能力 |
 | --- | --- |
+| 脚本与 SpaceClaim | 安全写入 `.wbjn/.py/.tcl/.rpl/.jou/.ccl/.pre/.cse`，批处理运行 SpaceClaim Python |
 | Workbench | 启停 bridge、执行脚本、读取/打开/保存/更新项目、创建分析系统 |
 | ICEM CFD | 启动 GUI 或 batch 会话、执行 Tcl/Replay、查询命令、运行 Replay 文件 |
 | Mechanical / MAPDL | 创建热/结构/动力学系统，直接运行 APDL 输入文件 |
 | Fluent | 直接运行 journal/TUI；Workbench 模板存在时也可创建系统 |
-| CFX | 创建 Workbench CFX 系统，直接运行 `.def` |
+| CFX | 批处理运行 CFX-Pre session、CFX Solver `.def` 和 CFD-Post `.cse` |
 | System Coupling / FSI | 创建 CFX–Transient Structural 双向流固耦合工程、连接参与方、配置传递和求解控制、运行或导出 |
 
 支持的 Workbench 系统：稳态热、瞬态热、静力、瞬态结构、模态、谐响应、响应谱、随机振动、CFX、System Coupling，以及安装中可用的 Fluent 模板。
@@ -38,7 +39,7 @@ flowchart LR
     A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
     B -->|JSON file IPC| C[Workbench bridge journal]
     B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[MAPDL / Fluent / CFX]
+    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
     C --> F[Ansys Workbench / System Coupling]
     D --> G[ICEM CFD]
 ```
@@ -78,8 +79,10 @@ ANSYS_RUNWB2 = 'D:\Program Files\ANSYS Inc\v251\Framework\bin\Win64\RunWB2.exe'
 ANSYS_MECHANICAL = 'D:\Program Files\ANSYS Inc\v251\aisol\bin\winx64\AnsysWBU.exe'
 ANSYS_MAPDL = 'D:\Program Files\ANSYS Inc\v251\ansys\bin\winx64\ANSYS251.exe'
 ANSYS_FLUENT = 'D:\Program Files\ANSYS Inc\v251\fluent\ntbin\win64\fluent.exe'
+ANSYS_SPACECLAIM = 'D:\Program Files\ANSYS Inc\v251\scdm\SpaceClaim.exe'
 ANSYS_CFX_SOLVE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe'
 ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
+ANSYS_CFX_POST = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5post.exe'
 ANSYS_ICEM_CFD = 'D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat'
 ```
 
@@ -120,6 +123,49 @@ save_project
 ```
 
 不需要常驻 bridge 的一次性任务可使用 `run_workbench_journal`、`create_workbench_analysis_system` 或 `create_and_run_thermal_bar_demo`。
+
+### 几何到平衡位置的 CFX 全流程
+
+下面的接口覆盖“几何 → 网格 → CFX 设置 → 求解 → 后处理 → 外层平衡迭代”的执行链：
+
+```text
+write_ansys_script + run_spaceclaim_script
+  → SpaceClaim 参数化几何（.scdocx/.step）
+start_icem_bridge / execute_icem_script / run_icem_replay
+  → ICEM 网格（.uns/.fbc）
+write_ansys_script + run_cfx_pre_session
+  → CFX-Pre 设置与 .def
+run_cfx_solver
+  → CFX .res
+write_ansys_script + run_cfx_post_session
+  → 支点力矩、承载力、压力场等 CSV/图片
+write_ansys_script + run_workbench_journal
+  → .wbjn 更新输入参数、Update、读取输出并执行 Newton-Raphson/阻尼迭代
+```
+
+例如，CFD-Post session 可以这样运行并强制检查输出是否真正生成：
+
+```text
+run_cfx_post_session(
+  session_file="D:/cases/export_loads.cse",
+  result_file="D:/cases/final.res",
+  expected_output="D:/cases/load_and_moment.csv"
+)
+```
+
+外层 `.wbjn` 建议在日志末尾写入明确完成标志，并要求收敛报告或最终工程存在：
+
+```text
+run_workbench_journal(
+  journal_path="D:/cases/equilibrium_iteration.wbjn",
+  log_file="D:/cases/equilibrium_iteration.log",
+  completion_marker="ITERATION_CONVERGED",
+  expected_output="D:/cases/equilibrium_converged.wbpj",
+  timeout_seconds=7200
+)
+```
+
+`completion_marker` 和 `expected_output` 是成功保护：进程返回码为 0、日志在本次运行中更新并出现完成标志、目标文件也在本次运行中创建或更新时，才报告整个迭代成功；旧日志和旧结果不会被误认为新收敛。
 
 ### CFX–Mechanical 双向流固耦合
 
@@ -178,17 +224,20 @@ run_icem_replay(
 ```text
 run_mapdl_input(input_file="D:/cases/model.dat")
 run_fluent_journal(journal_path="D:/cases/run.jou")
+run_cfx_pre_session(session_file="D:/cases/setup.pre", expected_output="D:/cases/model.def")
 run_cfx_solver(definition_file="D:/cases/model.def")
+run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/model.res")
 ```
 
 ## MCP 工具
 
 <details>
-<summary>展开全部 46 个工具</summary>
+<summary>展开全部 50 个工具</summary>
 
 | 工具 | 说明 |
 | --- | --- |
 | `check_ansys_installation` | 检查 Ansys 程序和 bridge 路径 |
+| `write_ansys_script` | 安全写入受支持的 Ansys 脚本文件，默认禁止覆盖 |
 | `check_icem_installation` | 检查 ICEM CFD 和 Tcl bridge |
 | `start_icem_bridge` | 启动 ICEM CFD 常驻会话 |
 | `stop_icem_bridge` | 停止 ICEM CFD 常驻会话 |
@@ -227,7 +276,10 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 | `create_cfx_flow_system_live` | 创建 CFX 系统 |
 | `create_fluent_flow_system_live` | 尝试创建 Fluent 系统 |
 | `create_thermal_bar_demo_live` | 创建并求解热分析示例 |
-| `run_workbench_journal` | 批处理运行 Workbench journal |
+| `run_spaceclaim_script` | 批处理运行 SpaceClaim Python 并验证几何输出 |
+| `run_cfx_pre_session` | 批处理运行 CFX-Pre session 并验证 `.cfx/.def` 输出 |
+| `run_cfx_post_session` | 批处理运行 CFD-Post `.cse` 并验证导出文件 |
+| `run_workbench_journal` | 批处理运行 Workbench journal，可验证日志标志和结果文件 |
 | `create_workbench_analysis_system` | 批处理创建分析系统 |
 | `create_steady_state_thermal_system` | 批处理创建稳态热系统 |
 | `run_mapdl_input` | 运行 MAPDL 输入文件 |
@@ -249,18 +301,21 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 
 以下项目已在 Ansys 2025 R1 上实机通过：
 
-- 46 个 MCP 工具和 3 个资源注册
+- 50 个 MCP 工具和 3 个资源注册
 - Workbench bridge 启停、脚本执行、项目读取/打开/保存/更新
 - 稳态热、瞬态热、静力、瞬态结构、模态、谐响应、响应谱、随机振动和 CFX 系统创建
 - System Coupling 模板、CFX/Transient Structural 参与方连接，以及三系统 FSI 工程保存
 - Workbench 与 MAPDL 热分析求解：525 个节点，20–100 °C，0 个 MAPDL 错误
 - Fluent `3ddp` journal 无界面运行
 - ICEM CFD bridge、Tcl/Replay、命令发现和 batch 模式
+- SpaceClaim、CFX-Pre 和 CFD-Post 的批处理入口与输出保护
+- CFD-Post `.cse` 已对真实 `.res` 完成 PAD 压力/坐标/面连接数据导出
 
 当前边界：
 
 - 本机 Workbench 未发现常见 Fluent 模板；`run_fluent_journal` 已验证可用。
 - `run_cfx_solver` 已完成路径和调用逻辑检查，完整求解仍需要用户提供有效 `.def`。
+- MCP 提供完整执行链，但不会猜测具体几何参数、边界条件、收敛阈值或 Newton-Raphson 雅可比；这些必须写入针对实际模型验证过的脚本。
 - 双向数据传递与耦合求解需要实际 CFX/Mechanical 网格、System Coupling 区域和变量；空工程只验证系统拓扑，不能代替物理算例。
 
 ## 故障排查
@@ -279,7 +334,7 @@ run_cfx_solver(definition_file="D:/cases/model.def")
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-测试会核对 README、46 个注册工具、3 个资源、bridge 版本以及 ICEM IPC 行为。
+测试会核对 README、50 个注册工具、3 个资源、bridge 版本、脚本安全写入、CFX 前后处理命令以及 ICEM IPC 行为。
 
 ## License
 
