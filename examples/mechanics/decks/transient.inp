@@ -1,0 +1,10 @@
+antype,trans
+trnopt,full
+tintp,0.0
+kbc,1
+time,0.02
+nsubst,400
+f,9,fx,100
+outres,nsol,all
+solve
+finish

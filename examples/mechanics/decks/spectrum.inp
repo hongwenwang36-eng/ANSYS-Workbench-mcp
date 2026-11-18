@@ -1,0 +1,10 @@
+/solu
+antype,spectr
+spopt,sprs
+svtyp,2
+sed,1
+freq,1,100
+sv,0.02,1,1
+srss,0,disp
+solve
+finish

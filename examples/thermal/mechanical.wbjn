@@ -1,0 +1,28 @@
+# encoding: utf-8
+import os
+import traceback
+
+root = __RUN_DIR__
+project = os.path.join(root, "thermal_mechanical.wbpj")
+log = open(os.path.join(root, "workbench.log"), "w")
+try:
+    Reset()
+    system = GetTemplate(TemplateName="Steady-State Thermal", Solver="ANSYS").CreateSystem()
+    system.GetContainer(ComponentName="Geometry").SetFile(FilePath=os.path.join(root, "bar.scdocx"))
+    model = system.GetContainer(ComponentName="Model")
+    model.Edit(Interactive=False)
+    with open(os.path.join(root, "mechanical.py")) as stream:
+        model.SendCommand(Language="Python", Command="root = %r\n" % root + stream.read())
+    model.Exit()
+    with open(os.path.join(root, "mechanical.log")) as evidence:
+        assert "MECHANICAL_CHECK_PASSED" in evidence.read()
+    Save(FilePath=project, Overwrite=True)
+    Reset()
+    Open(FilePath=project)
+    assert len(GetAllSystems()) == 1
+    log.write("REOPEN_MECHANICAL_PASSED\n")
+except:
+    log.write(traceback.format_exc())
+    raise
+finally:
+    log.close()

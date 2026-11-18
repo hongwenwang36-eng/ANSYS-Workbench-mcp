@@ -1,0 +1,9 @@
+/batch
+/post1
+file,file,rst
+set,last
+/show,png
+/view,1,1,1,1
+plnsol,u,sum
+/show,close
+/exit,nosave

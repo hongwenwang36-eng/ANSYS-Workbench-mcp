@@ -11,26 +11,38 @@
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Codex またはその他の MCP クライアントから **SpaceClaim、Ansys Workbench、System Coupling、ICEM CFD、MAPDL、Fluent、CFX-Pre、CFX Solver、CFD-Post** を直接制御します。
+Codex またはその他の MCP クライアントから **SpaceClaim、Ansys Workbench、Ansys Meshing、System Coupling、ICEM CFD、MAPDL、Fluent、CFX-Pre、CFX Solver、CFD-Post** を直接制御します。
 
 本プロジェクトは、マウス操作や画面認識に依存せず、Ansys が公式にサポートする Journal、Workbench Scripting、Tcl/Replay、バッチ実行インターフェースを使用します。
 
 > [!NOTE]
 > 本プロジェクトは Ansys の公式製品ではありません。現在は Windows を対象とし、Ansys 2025 R1 の実機環境で検証済みです。
 
-## 主な機能
+## 対応するシミュレーション
 
-| モジュール | 機能 |
-| --- | --- |
-| スクリプトと SpaceClaim | `.wbjn/.py/.tcl/.rpl/.jou/.ccl/.pre/.cse` を安全に書き込み、SpaceClaim Python を batch モードで実行 |
-| Workbench | bridge の起動・停止、スクリプト実行、プロジェクトの取得/オープン/保存/更新、解析システムの作成 |
-| ICEM CFD | GUI または batch セッションの起動、Tcl/Replay の実行、コマンド検索、Replay ファイルの実行 |
-| Mechanical / MAPDL | 熱、構造、動力学システムの作成、APDL 入力ファイルの直接実行 |
-| Fluent | journal/TUI の直接実行、互換性のある Workbench テンプレートがある場合のシステム作成 |
-| CFX | CFX-Pre session、CFX Solver `.def`、CFD-Post `.cse` を batch モードで実行 |
-| System Coupling / FSI | CFX–Transient Structural 双方向流体構造連成プロジェクトの作成、参加システムの接続、転送とソルバー制御の設定、実行またはエクスポート |
+| 解析 | ソルバー | 実機で検証した範囲 |
+| --- | --- | --- |
+| 静的・非線形構造解析 | Mechanical APDL | 線形静解析、摩擦なし接触、二直線塑性 |
+| 構造動力学 | Mechanical APDL | モード、予応力付きモード、調和応答、過渡応答、応答スペクトル、ランダム振動 |
+| 熱解析 | Mechanical、Mechanical APDL | 定常熱伝導、過渡加熱 |
+| 熱構造連成 | Mechanical APDL | 温度場を構造モデルに転送し、熱膨張を計算 |
+| 流体解析 | Fluent、CFX | 流路内流れ、静的混合、キャビテーション |
+| 共役熱伝達 | Fluent | 流体と固体の温度場を求め、界面の熱流量を確認 |
+| 双方向流体構造連成 | System Coupling、Fluent、Mechanical APDL | 流体力と構造変位を交換。CFX–Mechanical の Workbench 構成はシステム接続まで検証 |
 
-対応する Workbench システムは、Steady-State Thermal、Transient Thermal、Static Structural、Transient Structural、Modal、Harmonic Response、Response Spectrum、Random Vibration、CFX、System Coupling、およびインストール済みの Fluent テンプレートです。
+## 実機検証例
+
+**非線形接触解析 · 軸方向変位**
+
+![非線形接触解析 · 軸方向変位](docs/images/nonlinear-contact-displacement.png)
+
+**定常熱伝導解析 · 温度**
+
+![定常熱伝導解析 · 温度](docs/images/steady-thermal-temperature.png)
+
+**Fluent キャビテーション解析 · 蒸気体積分率**
+
+![Fluent キャビテーション解析 · 蒸気体積分率](docs/images/fluent-cavitation-vapor-fraction.png)
 
 ## 仕組み
 
@@ -40,7 +52,7 @@ flowchart LR
     B -->|JSON file IPC| C[Workbench bridge journal]
     B -->|Tcl file IPC| D[ICEM CFD bridge]
     B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / System Coupling]
+    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
     D --> G[ICEM CFD]
 ```
 
@@ -84,116 +96,32 @@ ANSYS_CFX_SOLVE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe'
 ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
 ANSYS_CFX_POST = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5post.exe'
 ANSYS_ICEM_CFD = 'D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat'
+ANSYS_SYSTEM_COUPLING = 'D:\Program Files\ANSYS Inc\v251\SystemCoupling\bin\systemcoupling.bat'
 ```
 
 Ansys のインストール先が異なる場合は、対応する環境変数を変更してください。保存後、Codex を再起動します。
 
 ### 3. 接続の確認
 
-Codex で次のツールを順番に呼び出します。
+まず `check_ansys_installation` で実行ファイルのパスを確認します。現在の Workbench プロジェクトを操作する場合は、bridge を起動して接続を確認します。
 
 ```text
-check_ansys_installation
 start_workbench_bridge
 check_workbench_connection
 ```
 
-接続に成功すると、Codex からシステムの作成、スクリプトの実行、プロジェクトの操作が可能になります。
+独立した Ansys Meshing とソルバーのバッチツールは直接実行できます。
 
-## よく使う操作
+## Skill と実機検証例
 
-### Workbench
+12 個のプロジェクト Skill は、ワークフロー、形状、メッシュ、構造・動力学、熱、CFD、連成、パラメーター検討、診断、検証、ポスト処理を扱います。 [Skill 一覧と実行例](docs/skills-and-validation.md)
 
-```text
-# Steady-State Thermal システムを作成
-create_steady_state_thermal_system_live(
-  project_dir="D:/ansys-projects",
-  project_name="thermal_case"
-)
-
-# CFX システムを作成
-create_cfx_flow_system_live(
-  project_dir="D:/ansys-projects",
-  project_name="cfx_case"
-)
-
-# 現在のプロジェクトを取得して保存
-get_project_info
-save_project
-```
-
-常駐 bridge が不要な一回限りの処理には、`run_workbench_journal`、`create_workbench_analysis_system`、または `create_and_run_thermal_bar_demo` を使用できます。
-
-### 形状から CFX 平衡位置までの一連のワークフロー
-
-新しい実行ツールは形状から平衡反復までを接続します。`write_ansys_script` と `run_spaceclaim_script` で形状を作成し、ICEM bridge または Replay でメッシュを生成し、`run_cfx_pre_session` で設定と `.def` を作成し、`run_cfx_solver` で解析した後、`run_cfx_post_session` で荷重、モーメント、場データをエクスポートします。外側の反復は `run_workbench_journal` でパラメータを更新し、Newton-Raphson または減衰反復を実行できます。新しい出力とログマーカーの検査により、古いファイルを今回の成功と誤認しません。
-
-### CFX–Mechanical 双方向 FSI
-
-```text
-# 1. 3つのシステムを作成し、2つの参加システムを接続
-create_cfx_mechanical_fsi_project_live(
-  project_dir="D:/ansys-projects/fsi",
-  project_name="cfx_mechanical_fsi"
-)
-
-# 2. CFX と Mechanical でメッシュ、非定常物理、連成境界を設定し、Setup を更新
-# 3. 実際に公開された参加システム、領域、変数名を取得
-get_system_coupling_status_live
-
-# 4. 連成の時間刻みと反復回数を設定
-configure_system_coupling_settings_live(
-  step_size="0.001 [s]",
-  end_time="0.1 [s]",
-  minimum_iterations=1,
-  maximum_iterations=10
-)
-
-# 5. 前の手順で返された正確な名前を使って双方向転送を作成
-configure_cfx_mechanical_two_way_fsi_live(...)
-
-# 6. 検証後に解析を実行
-run_system_coupling_solution_live
-```
-
-双方向 FSI には、Mechanical 変位 → CFX メッシュ変位と、CFX 流体力 → Mechanical 荷重の2つの転送があります。プロジェクト作成ツールはメッシュ、材料、境界、インターフェース領域を推測して作成しません。これらの物理入力は実際のモデルから与える必要があります。
-
-### ICEM CFD
-
-```text
-# ヘッドレスセッションを開始
-start_icem_bridge(batch=true)
-
-# セッションと Blocking コマンドを確認
-get_icem_session_info
-list_icem_commands(pattern="ic_hex_*", limit=300)
-
-# Tcl/Replay を実行
-execute_icem_script(script="ic_load_tetin {D:/cases/model.tin}")
-
-# Replay ファイルを一度だけ実行
-run_icem_replay(
-  replay_file="D:/cases/mesh.rpl",
-  workdir="D:/cases"
-)
-```
-
-信頼できるパラメータ実行のため、まず ICEM Replay Control でコマンドを記録し、その後 MCP に渡すことを推奨します。
-
-### ソルバーの直接実行
-
-```text
-run_mapdl_input(input_file="D:/cases/model.dat")
-run_fluent_journal(journal_path="D:/cases/run.jou")
-run_cfx_pre_session(session_file="D:/cases/setup.pre", expected_output="D:/cases/model.def")
-run_cfx_solver(definition_file="D:/cases/model.def")
-run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/model.res")
-```
+[実機検証記録](docs/validation-record.md) · [Ansys Meshing と ICEM の例](examples/meshing/README.md)
 
 ## MCP ツール
 
 <details>
-<summary>全50ツールを表示</summary>
+<summary>全57ツールを表示</summary>
 
 | ツール | 説明 |
 | --- | --- |
@@ -240,9 +168,16 @@ run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/m
 | `run_spaceclaim_script` | SpaceClaim Python を batch モードで実行し形状出力を検証 |
 | `run_cfx_pre_session` | CFX-Pre session を batch モードで実行し `.cfx/.def` 出力を検証 |
 | `run_cfx_post_session` | CFD-Post `.cse` を batch モードで実行しエクスポート結果を検証 |
+| `generate_ansys_mesh` | 独立した Ansys Meshing システムでメッシュを生成・出力 |
 | `run_workbench_journal` | Workbench journal を batch モードで実行し、ログマーカーと結果ファイルを任意で検証 |
 | `create_workbench_analysis_system` | 解析システムを batch モードで作成 |
 | `create_steady_state_thermal_system` | Steady-State Thermal システムを batch モードで作成 |
+| `run_system_coupling_script` | System Coupling Python batch |
+| `start_ansys_job` | バックグラウンドジョブを開始 |
+| `get_ansys_job` | 状態とログを取得 |
+| `stop_ansys_job` | 指定ジョブを停止 |
+| `diagnose_ansys_log` | ログからエラーを抽出 |
+| `verify_simulation` | CSV の単位と許容範囲を検査 |
 | `run_mapdl_input` | MAPDL 入力ファイルを実行 |
 | `run_fluent_journal` | Fluent journal を実行 |
 | `run_cfx_solver` | CFX `.def` ファイルを実行 |
@@ -258,27 +193,6 @@ run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/m
 | `ansys-workbench://installation` | Ansys インストールパスの確認結果 |
 | `ansys-workbench://icem/status` | ICEM CFD bridge の状態 |
 
-## 検証状況
-
-以下の項目は Ansys 2025 R1 の実機環境で検証済みです。
-
-- 50個の MCP ツールと3個のリソースの登録
-- Workbench bridge の起動・停止、スクリプト実行、プロジェクトの取得/オープン/保存/更新
-- Steady-State Thermal、Transient Thermal、Static Structural、Transient Structural、Modal、Harmonic Response、Response Spectrum、Random Vibration、CFX システムの作成
-- System Coupling テンプレート、CFX/Transient Structural 参加システムの接続、3システム FSI プロジェクトの保存
-- Workbench と MAPDL の熱解析：525ノード、20–100 °C、MAPDL エラー0件
-- Fluent `3ddp` journal のヘッドレス実行
-- ICEM CFD bridge、Tcl/Replay、コマンド検索、batch モード
-- SpaceClaim、CFX-Pre、CFD-Post の batch 実行と新規出力チェック
-- 実際の `.res` から PAD 圧力、座標、面接続データを出力する CFD-Post `.cse`
-
-現在の制限事項：
-
-- 検証した Workbench 環境では一般的な Fluent テンプレートが見つかりませんでしたが、`run_fluent_journal` は検証済みです。
-- `run_cfx_solver` のパスと呼び出しロジックは確認済みですが、完全な解析にはユーザーが提供する有効な `.def` ファイルが必要です。
-- MCP は実行チェーン全体を提供しますが、形状パラメータ、境界条件、収束条件、Newton-Raphson Jacobian を推測しません。実モデル用に検証したスクリプトで定義する必要があります。
-- 双方向転送と連成解析には、実際の CFX/Mechanical メッシュ、System Coupling の領域と変数が必要です。空のプロジェクトで検証できるのはシステムトポロジーのみで、物理ケースの代わりにはなりません。
-
 ## トラブルシューティング
 
 | 問題 | 対処方法 |
@@ -289,14 +203,31 @@ run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/m
 | ICEM bridge がタイムアウトする | `start_icem_bridge(batch=true)` で開始し、`icem/icem_bridge.log` を確認 |
 | Fluent テンプレートが利用できない | `run_fluent_journal` を使用するか、`template_name` でインストール済みテンプレートを指定 |
 
+MCP クライアントが使えない場合は、リポジトリのルートで `.\.venv\Scripts\python.exe stop_mcp.py` を実行すると、bridge の作業ディレクトリに停止信号を書き込みます。
+
 ## 開発とテスト
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-テストでは README、登録済みの50ツール、3リソース、bridge バージョンの一致、安全なスクリプト書き込み、CFX 前後処理コマンド、ICEM IPC の動作を確認します。
+テストでは README、登録済みの57ツール、3リソース、bridge バージョンの一致、安全なスクリプト書き込み、CFX 前後処理コマンド、ICEM IPC の動作を確認します。
 
 ## ライセンス
 
 [MIT](LICENSE)
+
+## このバージョンの変更
+
+### 追加
+
+- 形状、メッシュ、解析、検証、ポスト処理などを扱う 12 個の ANSYS Skill を追加。
+- `generate_ansys_mesh` を追加。形状から独立した Mesh プロジェクトを作成し、メッシュ制御を適用して `.meshdat` を出力し、再オープン後に統計を確認。
+- バックグラウンドジョブの開始・照会・停止、ログ診断、CSV の数値検証、独立した System Coupling のバッチ実行を追加。MCP ツールは 50 個から 57 個に増加。
+- 構造・動力学、熱、メッシュ、Fluent、CFX、連成の再実行可能な例と検証記録を追加。
+
+### 変更と修正
+
+- バッチ出力の検証を強化し、空のファイルを失敗として扱うように変更。バックグラウンドジョブの停止時に、所属する Windows ジョブのプロセスを終了。
+- Fluent のバッチ画像出力、Mechanical の節点 CSV 出力、プロジェクト再オープン後の画像更新を修正。
+- 5 言語の README を整理し、対応解析、実機のコンター図、バージョン変更を掲載。
