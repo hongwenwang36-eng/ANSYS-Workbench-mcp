@@ -46,17 +46,24 @@ Codex 또는 다른 MCP 클라이언트에서 **SpaceClaim, Ansys Workbench, Ans
 
 ## 동작 방식
 
+Codex나 다른 MCP 클라이언트가 표준 입출력(stdio)을 통해 로컬 Python 서버를 호출합니다. 서버는 도구에 따라 상주 브리지를 사용하거나 배치로 실행한 뒤, 상태, 로그 일부, 또는 파일 경로를 MCP로 반환합니다.
+
 ```mermaid
-flowchart LR
-    A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
-    B -->|JSON file IPC| C[Workbench bridge journal]
-    B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
-    D --> G[ICEM CFD]
+flowchart TD
+    Client["Codex / MCP 클라이언트"] <-->|MCP stdio| Server["mcp_server.py"]
+    Server --> Live["상주 브리지<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
+    Server --> Batch["Ansys 배치 도구<br/>형상, 메시, 솔버, 후처리"]
+    Server --> Jobs["백그라운드 작업"]
+    Jobs --> Batch
+    Live --> Output["프로젝트, 메시, 결과, 로그"]
+    Batch --> Output
+    Output -.-> Checks["필요에 따라 로그 진단 및 지표 검증"]
 ```
 
-Workbench와 ICEM의 명령, 결과 및 로그는 런타임 디렉터리에 기록됩니다. 이 디렉터리는 자동으로 생성되며 `.gitignore`에서 제외됩니다.
+- **상주 브리지.** Workbench는 JSON 명령 파일을 통해 현재 프로젝트 세션에서 해석 시스템을 만들고, 프로젝트를 업데이트하고, System Coupling을 설정합니다. ICEM CFD는 Tcl 명령 파일로 현재 세션에서 스크립트를 실행합니다. 두 브리지 모두 JSON으로 응답합니다.
+- **배치 실행.** 서버는 저널, 스크립트 또는 솔버 입력 파일을 Ansys 프로그램에 전달합니다. SpaceClaim 형상, 독립 실행형 Ansys Meshing, ICEM Replay, MAPDL, Fluent, CFX, CFD-Post, 독립 실행형 System Coupling을 지원합니다. 양방향 유체-구조 연성 해석에서는 독립 실행형 System Coupling을 통해 Fluent와 MAPDL 사이에 유체력과 구조 변위를 전달할 수 있습니다.
+- **백그라운드 작업.** 오래 걸리는 배치 작업은 `start_ansys_job`으로 시작합니다. 다시 연결한 뒤 작업 ID로 `get_ansys_job`을 호출해 상태와 로그를 확인하거나, `stop_ansys_job`으로 로컬 작업을 취소할 수 있습니다.
+- **결과 확인.** `diagnose_ansys_log`로 솔버 로그에 기록된 오류 위치를 확인하고, `verify_simulation`으로 CSV 지표의 단위와 허용 범위를 검증합니다. 서버는 필요에 따라 `commands/`, `results/`, `icem/`, `runs/` 등의 기본 실행 디렉터리를 생성합니다. 이 디렉터리는 `.gitignore`에 등록되어 있습니다.
 
 ## 빠른 시작
 

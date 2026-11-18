@@ -46,17 +46,24 @@ The project uses officially supported Ansys entry points—journals, Workbench s
 
 ## How it works
 
+Codex or another MCP client calls the local Python server over standard input and output (stdio). The server uses a persistent bridge or runs a batch tool, then returns status, a log excerpt, or file paths over MCP.
+
 ```mermaid
-flowchart LR
-    A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
-    B -->|JSON file IPC| C[Workbench bridge journal]
-    B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
-    D --> G[ICEM CFD]
+flowchart TD
+    Client["Codex / MCP client"] <-->|MCP stdio| Server["mcp_server.py"]
+    Server --> Live["Persistent bridges<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
+    Server --> Batch["Ansys batch tools<br/>Geometry, meshing, solve, and postprocessing"]
+    Server --> Jobs["Background jobs"]
+    Jobs --> Batch
+    Live --> Output["Projects, meshes, results, and logs"]
+    Batch --> Output
+    Output -.-> Checks["Optional log diagnosis and metric checks"]
 ```
 
-Workbench and ICEM commands, results, and logs are written to runtime directories. These directories are created automatically and excluded by `.gitignore`.
+- **Persistent bridges.** Workbench receives commands through JSON files in the active project session, where it can create analysis systems, update the project, and configure System Coupling. The ICEM CFD bridge runs scripts in the active session using Tcl command files. Both bridges return JSON responses.
+- **Batch tools.** The server passes journals, scripts, or solver input files to Ansys programs. It supports SpaceClaim geometry, standalone Ansys Meshing, ICEM Replay, MAPDL, Fluent, CFX, CFD-Post, and standalone System Coupling. A two-way FSI run can use standalone System Coupling to exchange fluid forces and structural displacements between Fluent and MAPDL.
+- **Background jobs.** Submit a long batch run with `start_ansys_job`. Use the job ID with `get_ansys_job` to retrieve status and logs after reconnecting, or with `stop_ansys_job` to cancel the local job.
+- **Result checks.** Use `diagnose_ansys_log` to locate errors in solver logs and `verify_simulation` to check CSV metrics against limits in matching units. The server creates default runtime directories such as `commands/`, `results/`, `icem/`, and `runs/` as needed. Git ignores those directories.
 
 ## Quick start
 

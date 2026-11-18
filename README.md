@@ -48,17 +48,24 @@
 
 ## 工作原理
 
+Codex 或其他 MCP 客户端通过标准输入输出（stdio）调用本地 Python 服务。服务根据工具选择常驻桥接或批处理，并通过 MCP 返回执行状态、日志摘要或文件路径。
+
 ```mermaid
-flowchart LR
-    A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
-    B -->|JSON file IPC| C[Workbench bridge journal]
-    B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
-    D --> G[ICEM CFD]
+flowchart TD
+    Client["Codex / MCP 客户端"] <-->|MCP stdio| Server["mcp_server.py"]
+    Server --> Live["常驻桥接<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
+    Server --> Batch["Ansys 批处理<br/>几何、网格、求解与后处理"]
+    Server --> Jobs["后台作业"]
+    Jobs --> Batch
+    Live --> Output["工程、网格、结果与日志"]
+    Batch --> Output
+    Output -.-> Checks["按需诊断日志或校验指标"]
 ```
 
-Workbench 和 ICEM 的命令、结果、日志都写入运行时目录；这些目录会自动创建并被 `.gitignore` 排除。
+- **常驻桥接。** Workbench 通过 JSON 命令文件与当前工程会话通信，可创建分析系统、更新工程、配置 System Coupling。ICEM CFD 通过 Tcl 命令文件在当前会话中执行脚本，两个桥接都通过 JSON 返回响应。
+- **批处理。** 服务向 Ansys 程序传入 Journal、脚本或求解输入文件，可运行 SpaceClaim 几何、独立 Ansys Meshing、ICEM Replay、MAPDL、Fluent、CFX、CFD-Post 和独立 System Coupling。前面的 Fluent 流固耦合案例使用独立 System Coupling，在 Fluent 与 MAPDL 之间交换流体力和结构位移。
+- **后台作业。** 长时间批处理可用 `start_ansys_job` 提交。凭作业 ID 可用 `get_ansys_job` 在重连后查询状态和日志，也可用 `stop_ansys_job` 取消本地作业。
+- **结果检查。** 需要排查失败时，用 `diagnose_ansys_log` 定位求解日志中的错误。需要验收计算指标时，用 `verify_simulation` 检查 CSV 数据的单位和阈值。默认运行时目录（如 `commands/`、`results/`、`icem/`、`runs/`）由服务按需创建，并由 `.gitignore` 排除。
 
 ## 快速开始
 

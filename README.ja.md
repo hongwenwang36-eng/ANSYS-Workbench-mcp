@@ -46,17 +46,24 @@ Codex またはその他の MCP クライアントから **SpaceClaim、Ansys Wo
 
 ## 仕組み
 
+Codex などの MCP クライアントは、標準入出力（stdio）を通じてローカルの Python サーバーを呼び出します。サーバーはツールに応じて常駐ブリッジまたはバッチ実行を使い、状態、ログの抜粋、ファイルのパスなどを MCP で返します。
+
 ```mermaid
-flowchart LR
-    A[Codex / MCP Client] -->|MCP stdio| B[mcp_server.py]
-    B -->|JSON file IPC| C[Workbench bridge journal]
-    B -->|Tcl file IPC| D[ICEM CFD bridge]
-    B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
-    D --> G[ICEM CFD]
+flowchart TD
+    Client["Codex / MCP クライアント"] <-->|MCP stdio| Server["mcp_server.py"]
+    Server --> Live["常駐ブリッジ<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
+    Server --> Batch["Ansys バッチツール<br/>形状、メッシュ、求解、後処理"]
+    Server --> Jobs["バックグラウンドジョブ"]
+    Jobs --> Batch
+    Live --> Output["プロジェクト、メッシュ、結果、ログ"]
+    Batch --> Output
+    Output -.-> Checks["必要に応じてログ診断と指標の検証"]
 ```
 
-Workbench と ICEM のコマンド、結果、ログはランタイムディレクトリに書き込まれます。これらのディレクトリは自動作成され、`.gitignore` によって除外されます。
+- **常駐ブリッジ。** Workbench は JSON コマンドファイルを受け取り、現在のプロジェクトセッションで解析システムの作成、プロジェクトの更新、System Coupling の設定を行います。ICEM CFD は Tcl コマンドファイルを使い、現在のセッションでスクリプトを実行します。どちらのブリッジも JSON で応答します。
+- **バッチ実行。** サーバーはジャーナル、スクリプト、ソルバーの入力ファイルを Ansys プログラムに渡します。SpaceClaim の形状処理、単体の Ansys Meshing、ICEM Replay、MAPDL、Fluent、CFX、CFD-Post、単体の System Coupling に対応します。双方向流体構造連成では、単体の System Coupling を使って Fluent と MAPDL の間で流体力と構造変位を交換できます。
+- **バックグラウンドジョブ。** 時間のかかるバッチ処理は `start_ansys_job` で開始できます。再接続後もジョブ ID を使って `get_ansys_job` で状態やログを確認でき、`stop_ansys_job` でローカルジョブを中止できます。
+- **結果の確認。** `diagnose_ansys_log` はソルバーログのエラー箇所を特定し、`verify_simulation` は CSV の指標を指定単位としきい値に照らして確認します。サーバーは必要に応じて `commands/`、`results/`、`icem/`、`runs/` などの実行用ディレクトリを作成します。これらは `.gitignore` で除外されます。
 
 ## クイックスタート
 
