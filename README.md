@@ -30,19 +30,21 @@
 | 共轭传热 | Fluent | 求解流体与固体温度场，核对界面热流 |
 | 双向流固耦合 | System Coupling、Fluent、Mechanical APDL | 交换流体力与结构位移。CFX–Mechanical 的 Workbench 路线已验证系统拓扑 |
 
-## 实测案例
+## 实测案例 · Fluent 双向流固耦合
 
-**非线性接触仿真 · 轴向位移**
+脉动水流经过双材料柔性悬臂挡板。Fluent 计算流体载荷，System Coupling 将载荷传给 Mechanical APDL，并将结构位移反馈给 Fluent 动网格。
 
-![非线性接触仿真 · 轴向位移](docs/images/nonlinear-contact-displacement.png)
+- 流道尺寸为 80.6 × 22 × 4 mm，挡板高 10 mm、厚 0.6 mm。入口水速在 0.12 s 内从零升至 0.09 m/s，再降至零。
+- 共计算 24 个时间步，界面两个方向的映射面积覆盖率均为 100%。挡板最大总位移为 0.259 mm，最大节点平均等效应力为 43.7 kPa，均出现在 45 ms。
+- 60 ms 时跨中截面最大流速为 0.299 m/s。结果来自一套网格和一个时间步，尚未进行网格及时间步独立性验证。
 
-**稳态导热仿真 · 温度**
+**60 ms 水流速度与静表压**
 
-![稳态导热仿真 · 温度](docs/images/steady-thermal-temperature.png)
+![Fluent 流固耦合算例的速度与压力云图](docs/images/fluent-fsi-flow.png)
 
-**Fluent 空化仿真 · 汽相体积分数**
+**45 ms 挡板位移与等效应力**
 
-![Fluent 空化仿真 · 汽相体积分数](docs/images/fluent-cavitation-vapor-fraction.png)
+![Fluent 流固耦合算例的结构位移与应力云图](docs/images/fluent-fsi-structure.png)
 
 ## 工作原理
 
