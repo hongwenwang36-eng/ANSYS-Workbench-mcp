@@ -30,34 +30,34 @@
 | 共軛熱傳 | Fluent | 求解流體與固體溫度場，核對介面熱流 |
 | 雙向流固耦合 | System Coupling、Fluent、Mechanical APDL | 交換流體力與結構位移。CFX–Mechanical 的 Workbench 路線已驗證系統拓樸 |
 
-## 實測案例
+## 實測案例 · Fluent 雙向流固耦合
 
-**非線性接觸模擬 · 軸向位移**
+脈動水流通過由兩種材料構成的柔性懸臂擋板。Fluent 計算流體載荷，System Coupling 將載荷傳給 Mechanical APDL，再把結構位移回傳給 Fluent 動態網格。
 
-![非線性接觸模擬 · 軸向位移](docs/images/nonlinear-contact-displacement.png)
+- 流道尺寸為 80.6 × 22 × 4 mm，擋板高 10 mm、厚 0.6 mm。入口流速在 0.12 s 內從零升至 0.09 m/s，再降至零。
+- 24 個時間步均已收斂，介面在兩個傳遞方向的面積映射覆蓋率均為 100%。最大總位移為 0.259 mm，最大節點平均等效應力為 43.7 kPa，均出現在 45 ms。
+- 60 ms 時，跨中截面的最大流速為 0.299 m/s。本次求解使用一套網格與固定時間步長，尚未驗證網格與時間步長獨立性。
 
-**穩態導熱模擬 · 溫度**
+**60 ms 時的水流速度與靜表壓**
 
-![穩態導熱模擬 · 溫度](docs/images/steady-thermal-temperature.png)
+![Fluent 流固耦合案例的速度與壓力等值圖](docs/images/fluent-fsi-flow.png)
 
-**Fluent 空化模擬 · 蒸氣體積分率**
+**45 ms 時的擋板位移與等效應力**
 
-![Fluent 空化模擬 · 蒸氣體積分率](docs/images/fluent-cavitation-vapor-fraction.png)
+![Fluent 流固耦合案例的位移與應力等值圖](docs/images/fluent-fsi-structure.png)
 
 ## 運作方式
 
 Codex 或其他 MCP 用戶端透過標準輸入輸出（stdio）呼叫本機 Python 伺服器。伺服器依工具選擇常駐橋接或批次執行，再透過 MCP 回傳執行狀態、日誌摘要或檔案路徑。
 
 ```mermaid
-flowchart TD
-    Client["Codex / MCP 用戶端"] <-->|MCP stdio| Server["mcp_server.py"]
-    Server --> Live["常駐橋接<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
-    Server --> Batch["Ansys 批次工具<br/>幾何、網格、求解與後處理"]
-    Server --> Jobs["背景作業"]
-    Jobs --> Batch
-    Live --> Output["專案、網格、結果與日誌"]
+flowchart LR
+    Client["MCP 用戶端"] <-->|stdio| Server["MCP Server"]
+    Server --> Live["常駐橋接"]
+    Server --> Batch["批次（可在背景執行）"]
+    Live --> Output["結果與日誌"]
     Batch --> Output
-    Output -.-> Checks["依需要診斷日誌或驗證指標"]
+    Output -.-> Checks["診斷與驗證"]
 ```
 
 - **常駐橋接。** Workbench 透過 JSON 指令檔與目前專案工作階段通訊，可建立分析系統、更新專案、設定 System Coupling。ICEM CFD 透過 Tcl 指令檔在目前工作階段執行指令碼。兩種橋接都以 JSON 回傳回應。

@@ -30,34 +30,34 @@ Codex 또는 다른 MCP 클라이언트에서 **SpaceClaim, Ansys Workbench, Ans
 | 복합 열전달 | Fluent | 유체 및 고체 온도장과 경계면 열유량 검증 |
 | 양방향 유체–구조 연성 | System Coupling, Fluent, Mechanical APDL | 유체력과 구조 변위를 교환. CFX–Mechanical Workbench 경로는 시스템 연결을 검증 |
 
-## 실기 검증 예제
+## 실행 검증 사례 · Fluent 양방향 유체-구조 연성 해석
 
-**비선형 접촉 해석 · 축 방향 변위**
+맥동하는 물이 두 가지 재료로 만든 유연한 외팔 배플을 지나갑니다. Fluent가 유체 하중을 계산하면 System Coupling이 이를 Mechanical APDL에 전달하고, 구조 변위를 Fluent의 동적 메시로 되돌려 보냅니다.
 
-![비선형 접촉 해석 · 축 방향 변위](docs/images/nonlinear-contact-displacement.png)
+- 유로의 크기는 80.6 × 22 × 4 mm이고 배플의 높이는 10 mm, 두께는 0.6 mm입니다. 입구 유속은 0.12 s 동안 0에서 0.09 m/s까지 증가한 후 다시 0으로 감소합니다.
+- 24개 시간 스텝이 모두 수렴했으며, 양방향 인터페이스 면적 매핑률은 모두 100%였습니다. 최대 총변위 0.259 mm와 최대 절점 평균 등가응력 43.7 kPa는 모두 45 ms에 나타났습니다.
+- 60 ms에서 폭 방향 중앙 단면의 최대 유속은 0.299 m/s였습니다. 단일 메시와 고정 시간 간격을 사용했으며, 메시 및 시간 간격 독립성은 아직 검증하지 않았습니다.
 
-**정상 열전도 해석 · 온도**
+**60 ms에서 물의 유속과 정적 게이지 압력**
 
-![정상 열전도 해석 · 온도](docs/images/steady-thermal-temperature.png)
+![Fluent 유체-구조 연성 해석의 유속 및 압력 등고선](docs/images/fluent-fsi-flow.png)
 
-**Fluent 공동현상 해석 · 증기 체적분율**
+**45 ms에서 배플의 변위와 등가응력**
 
-![Fluent 공동현상 해석 · 증기 체적분율](docs/images/fluent-cavitation-vapor-fraction.png)
+![Fluent 유체-구조 연성 해석의 변위 및 응력 등고선](docs/images/fluent-fsi-structure.png)
 
 ## 동작 방식
 
 Codex나 다른 MCP 클라이언트가 표준 입출력(stdio)을 통해 로컬 Python 서버를 호출합니다. 서버는 도구에 따라 상주 브리지를 사용하거나 배치로 실행한 뒤, 상태, 로그 일부, 또는 파일 경로를 MCP로 반환합니다.
 
 ```mermaid
-flowchart TD
-    Client["Codex / MCP 클라이언트"] <-->|MCP stdio| Server["mcp_server.py"]
-    Server --> Live["상주 브리지<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
-    Server --> Batch["Ansys 배치 도구<br/>형상, 메시, 솔버, 후처리"]
-    Server --> Jobs["백그라운드 작업"]
-    Jobs --> Batch
-    Live --> Output["프로젝트, 메시, 결과, 로그"]
+flowchart LR
+    Client["MCP 클라이언트"] <-->|stdio| Server["MCP Server"]
+    Server --> Live["상주 브리지"]
+    Server --> Batch["배치 / 백그라운드"]
+    Live --> Output["결과와 로그"]
     Batch --> Output
-    Output -.-> Checks["필요에 따라 로그 진단 및 지표 검증"]
+    Output -.-> Checks["진단 및 검증"]
 ```
 
 - **상주 브리지.** Workbench는 JSON 명령 파일을 통해 현재 프로젝트 세션에서 해석 시스템을 만들고, 프로젝트를 업데이트하고, System Coupling을 설정합니다. ICEM CFD는 Tcl 명령 파일로 현재 세션에서 스크립트를 실행합니다. 두 브리지 모두 JSON으로 응답합니다.

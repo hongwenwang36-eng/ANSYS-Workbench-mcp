@@ -35,8 +35,8 @@
 脉动水流经过双材料柔性悬臂挡板。Fluent 计算流体载荷，System Coupling 将载荷传给 Mechanical APDL，并将结构位移反馈给 Fluent 动网格。
 
 - 流道尺寸为 80.6 × 22 × 4 mm，挡板高 10 mm、厚 0.6 mm。入口水速在 0.12 s 内从零升至 0.09 m/s，再降至零。
-- 共计算 24 个时间步，界面两个方向的映射面积覆盖率均为 100%。挡板最大总位移为 0.259 mm，最大节点平均等效应力为 43.7 kPa，均出现在 45 ms。
-- 60 ms 时跨中截面最大流速为 0.299 m/s。结果来自一套网格和一个时间步，尚未进行网格及时间步独立性验证。
+- 24 个时间步均已收敛，界面两个方向的映射面积覆盖率均为 100%。挡板最大总位移为 0.259 mm，最大节点平均等效应力为 43.7 kPa，均出现在 45 ms。
+- 60 ms 时跨中截面最大流速为 0.299 m/s。结果来自一套网格和固定时间步长，尚未进行网格及时间步长独立性验证。
 
 **60 ms 水流速度与静表压**
 
@@ -51,15 +51,13 @@
 Codex 或其他 MCP 客户端通过标准输入输出（stdio）调用本地 Python 服务。服务根据工具选择常驻桥接或批处理，并通过 MCP 返回执行状态、日志摘要或文件路径。
 
 ```mermaid
-flowchart TD
-    Client["Codex / MCP 客户端"] <-->|MCP stdio| Server["mcp_server.py"]
-    Server --> Live["常驻桥接<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
-    Server --> Batch["Ansys 批处理<br/>几何、网格、求解与后处理"]
-    Server --> Jobs["后台作业"]
-    Jobs --> Batch
-    Live --> Output["工程、网格、结果与日志"]
+flowchart LR
+    Client["MCP 客户端"] <-->|stdio| Server["MCP Server"]
+    Server --> Live["常驻桥接"]
+    Server --> Batch["批处理（可后台）"]
+    Live --> Output["结果与日志"]
     Batch --> Output
-    Output -.-> Checks["按需诊断日志或校验指标"]
+    Output -.-> Checks["诊断与校验"]
 ```
 
 - **常驻桥接。** Workbench 通过 JSON 命令文件与当前工程会话通信，可创建分析系统、更新工程、配置 System Coupling。ICEM CFD 通过 Tcl 命令文件在当前会话中执行脚本，两个桥接都通过 JSON 返回响应。

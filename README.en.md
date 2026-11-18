@@ -30,34 +30,34 @@ The project uses officially supported Ansys entry points—journals, Workbench s
 | Conjugate heat transfer | Fluent | Fluid and solid temperature fields with an interface heat-flow check |
 | Two-way fluid–structure interaction | System Coupling, Fluent, Mechanical APDL | Exchange fluid forces and structural displacements. The CFX–Mechanical Workbench route was verified at the system topology level |
 
-## Verified examples
+## Validated example · Two-way FSI with Fluent
 
-**Nonlinear contact · Axial displacement**
+Pulsating water flow passes a flexible cantilever baffle made of two materials. Fluent computes the fluid load, and System Coupling transfers it to Mechanical APDL and feeds the structural displacement back to Fluent's dynamic mesh.
 
-![Nonlinear contact · Axial displacement](docs/images/nonlinear-contact-displacement.png)
+- The channel measures 80.6 × 22 × 4 mm. The baffle is 10 mm high and 0.6 mm thick. The inlet velocity rises from zero to 0.09 m/s and returns to zero over 0.12 s.
+- All 24 time steps converged, with 100% interface area mapping coverage in both directions. The maximum total displacement was 0.259 mm and the maximum node-averaged equivalent stress was 43.7 kPa, both at 45 ms.
+- At 60 ms, the maximum flow speed on the midspan section was 0.299 m/s. The run used one mesh and a fixed time step size. Mesh and time-step independence have yet to be assessed.
 
-**Steady heat conduction · Temperature**
+**Water velocity and static gauge pressure at 60 ms**
 
-![Steady heat conduction · Temperature](docs/images/steady-thermal-temperature.png)
+![Velocity and pressure contours for the Fluent FSI example](docs/images/fluent-fsi-flow.png)
 
-**Fluent cavitation · Vapor volume fraction**
+**Baffle displacement and equivalent stress at 45 ms**
 
-![Fluent cavitation · Vapor volume fraction](docs/images/fluent-cavitation-vapor-fraction.png)
+![Displacement and stress contours for the Fluent FSI example](docs/images/fluent-fsi-structure.png)
 
 ## How it works
 
 Codex or another MCP client calls the local Python server over standard input and output (stdio). The server uses a persistent bridge or runs a batch tool, then returns status, a log excerpt, or file paths over MCP.
 
 ```mermaid
-flowchart TD
-    Client["Codex / MCP client"] <-->|MCP stdio| Server["mcp_server.py"]
-    Server --> Live["Persistent bridges<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
-    Server --> Batch["Ansys batch tools<br/>Geometry, meshing, solve, and postprocessing"]
-    Server --> Jobs["Background jobs"]
-    Jobs --> Batch
-    Live --> Output["Projects, meshes, results, and logs"]
+flowchart LR
+    Client["MCP client"] <-->|stdio| Server["MCP Server"]
+    Server --> Live["Live bridges"]
+    Server --> Batch["Batch / background"]
+    Live --> Output["Results and logs"]
     Batch --> Output
-    Output -.-> Checks["Optional log diagnosis and metric checks"]
+    Output -.-> Checks["Result checks"]
 ```
 
 - **Persistent bridges.** Workbench receives commands through JSON files in the active project session, where it can create analysis systems, update the project, and configure System Coupling. The ICEM CFD bridge runs scripts in the active session using Tcl command files. Both bridges return JSON responses.

@@ -30,34 +30,34 @@ Codex またはその他の MCP クライアントから **SpaceClaim、Ansys Wo
 | 共役熱伝達 | Fluent | 流体と固体の温度場を求め、界面の熱流量を確認 |
 | 双方向流体構造連成 | System Coupling、Fluent、Mechanical APDL | 流体力と構造変位を交換。CFX–Mechanical の Workbench 構成はシステム接続まで検証 |
 
-## 実機検証例
+## 実機検証例 · Fluent による双方向流体構造連成
 
-**非線形接触解析 · 軸方向変位**
+脈動する水流が、2 種類の材料で構成した柔軟な片持ちバッフルを通過します。Fluent が流体荷重を計算し、System Coupling がそれを Mechanical APDL に伝達します。得られた構造変位は Fluent の動的メッシュに反映されます。
 
-![非線形接触解析 · 軸方向変位](docs/images/nonlinear-contact-displacement.png)
+- 流路の寸法は 80.6 × 22 × 4 mm、バッフルの高さは 10 mm、厚さは 0.6 mm です。入口流速は 0.12 s の間にゼロから 0.09 m/s まで上昇し、再びゼロに戻ります。
+- 24 ステップすべてで収束し、連成界面のマッピング面積率は両方向とも 100% でした。最大全変位は 0.259 mm、節点平均した相当応力の最大値は 43.7 kPa で、いずれも 45 ms に発生しました。
+- 60 ms での幅方向中央断面における最大流速は 0.299 m/s でした。単一のメッシュと固定の時間刻みを使用しており、メッシュと時間刻みへの依存性は未評価です。
 
-**定常熱伝導解析 · 温度**
+**60 ms における水の流速と静ゲージ圧**
 
-![定常熱伝導解析 · 温度](docs/images/steady-thermal-temperature.png)
+![Fluent 流体構造連成の流速と圧力の分布](docs/images/fluent-fsi-flow.png)
 
-**Fluent キャビテーション解析 · 蒸気体積分率**
+**45 ms におけるバッフルの変位と相当応力**
 
-![Fluent キャビテーション解析 · 蒸気体積分率](docs/images/fluent-cavitation-vapor-fraction.png)
+![Fluent 流体構造連成の変位と応力の分布](docs/images/fluent-fsi-structure.png)
 
 ## 仕組み
 
 Codex などの MCP クライアントは、標準入出力（stdio）を通じてローカルの Python サーバーを呼び出します。サーバーはツールに応じて常駐ブリッジまたはバッチ実行を使い、状態、ログの抜粋、ファイルのパスなどを MCP で返します。
 
 ```mermaid
-flowchart TD
-    Client["Codex / MCP クライアント"] <-->|MCP stdio| Server["mcp_server.py"]
-    Server --> Live["常駐ブリッジ<br/>Workbench (JSON)<br/>ICEM CFD (Tcl)"]
-    Server --> Batch["Ansys バッチツール<br/>形状、メッシュ、求解、後処理"]
-    Server --> Jobs["バックグラウンドジョブ"]
-    Jobs --> Batch
-    Live --> Output["プロジェクト、メッシュ、結果、ログ"]
+flowchart LR
+    Client["MCP クライアント"] <-->|stdio| Server["MCP Server"]
+    Server --> Live["常駐ブリッジ"]
+    Server --> Batch["バッチ / バックグラウンド"]
+    Live --> Output["結果とログ"]
     Batch --> Output
-    Output -.-> Checks["必要に応じてログ診断と指標の検証"]
+    Output -.-> Checks["診断と検証"]
 ```
 
 - **常駐ブリッジ。** Workbench は JSON コマンドファイルを受け取り、現在のプロジェクトセッションで解析システムの作成、プロジェクトの更新、System Coupling の設定を行います。ICEM CFD は Tcl コマンドファイルを使い、現在のセッションでスクリプトを実行します。どちらのブリッジも JSON で応答します。
