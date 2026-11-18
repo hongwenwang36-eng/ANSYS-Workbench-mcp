@@ -1,0 +1,106 @@
+# Run with a 'config' dictionary prepended by generate_ansys_mesh.
+import codecs
+import json
+import os
+import traceback
+
+
+editor_script = """
+import json
+import traceback
+
+
+def metric_value(value):
+    return float(getattr(value, "Value", value))
+
+
+def mesh_statistics(mesh):
+    mesh.MeshMetric = MeshMetricType.ElementQuality
+    nodes = int(mesh.Nodes)
+    elements = int(mesh.Elements)
+    if nodes <= 0 or elements <= 0:
+        raise RuntimeError("Ansys Meshing returned an empty mesh")
+    minimum = metric_value(mesh.Minimum)
+    average = metric_value(mesh.Average)
+    maximum = metric_value(mesh.Maximum)
+    if not 0.0 <= minimum <= average <= maximum <= 1.0:
+        raise RuntimeError("Invalid Element Quality statistics: %r" % ((minimum, average, maximum),))
+    return {
+        "nodes": nodes,
+        "elements": elements,
+        "element_quality": {
+            "minimum": minimum,
+            "average": average,
+            "maximum": maximum,
+        },
+    }
+
+
+try:
+    mesh = Model.Mesh
+    if generate:
+        if config["element_size_mm"] is not None:
+            mesh.ElementSize = Quantity("%.17g [mm]" % config["element_size_mm"])
+        if config["controls_script"]:
+            execfile(config["controls_script"])
+        mesh.GenerateMesh()
+    result = mesh_statistics(mesh)
+except Exception:
+    result = {"error": traceback.format_exc()}
+with open(result_path, "w") as stream:
+    json.dump(result, stream)
+"""
+
+
+def read_mesh(system, filename, generate):
+    result_path = os.path.join(config["directory"], filename)
+    mesh = system.GetContainer(ComponentName="Mesh")
+    command = "config = %r\nresult_path = %r\ngenerate = %r\n" % (
+        config, result_path, generate
+    )
+    mesh.Edit(Interactive=False)
+    try:
+        mesh.SendCommand(Language="Python", Command=command + editor_script)
+    finally:
+        mesh.Exit(SaveDatabase=generate)
+    if not os.path.isfile(result_path):
+        raise RuntimeError("Meshing editor did not write " + filename)
+    with open(result_path) as stream:
+        result = json.load(stream)
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result
+
+
+with codecs.open(config["log"], "w", "utf-8") as log:
+    try:
+        Reset()
+        system = GetTemplate(TemplateName="Mesh").CreateSystem()
+        system.GetContainer(ComponentName="Geometry").SetFile(FilePath=config["geometry"])
+        log.write("Generating mesh\n")
+        log.flush()
+        original = read_mesh(system, "mesh-stats.json", True)
+
+        system.GetComponent(Name="Mesh").Update()
+        mesh = system.GetContainer(ComponentName="Mesh")
+        mesh.Export(FilePath=config["mesh_file"])
+        Save(FilePath=config["project"])
+        log.write("Reopening saved project\n")
+        log.flush()
+
+        Reset()
+        Open(FilePath=config["project"])
+        reopened = read_mesh(GetAllSystems()[0], "reopened-stats.json", False)
+        counts_match = all(original[key] == reopened[key] for key in ("nodes", "elements"))
+        # Meshing can recompute aggregate statistics in a different order on reload.
+        quality_matches = all(
+            abs(value - reopened["element_quality"][key]) <= 1e-12
+            for key, value in original["element_quality"].items()
+        )
+        if not counts_match or not quality_matches:
+            raise RuntimeError("Mesh statistics changed after reopening: %r vs %r" % (original, reopened))
+        log.write("ANSYS_MESH_REOPENED\n")
+    except Exception as error:
+        log.write(unicode(error) + "\n")
+        log.write(traceback.format_exc())
+        raise

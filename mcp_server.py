@@ -13,11 +13,16 @@ The server supports two modes:
 
 from __future__ import annotations
 
+import simulation_checks
+import simulation_jobs
+
 import hashlib
 import json
+import math
 import os
 import shlex
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -71,6 +76,8 @@ ICEM_CFD = Path(os.environ.get("ANSYS_ICEM_CFD", DEFAULT_ICEM_CFD))
 DEFAULT_TIMEOUT = 30.0
 
 ANSYS_SCRIPT_SUFFIXES = {
+    ".inp",
+    ".dat",
     ".ccl",
     ".cse",
     ".jou",
@@ -251,11 +258,18 @@ def _run_process(
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
+    console_path = os.environ.get("ANSYS_MCP_JOB_CONSOLE")
+    if console_path:
+        import job_process
+        result = job_process.run(args, cwd, timeout_seconds, env, console_path,
+                                 os.environ["ANSYS_MCP_JOB_DIRECTORY"])
+        return {**result, "stdout": _read_tail(Path(console_path)), "stderr": ""}
     proc = subprocess.run(
         args,
         cwd=str(cwd),
         text=True,
         capture_output=True,
+        errors="replace",
         timeout=timeout_seconds,
         check=False,
         env=env,
@@ -387,7 +401,9 @@ def _read_tail(path: Path, limit: int = 12000) -> str:
     if not path.exists():
         return ""
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - limit * 4))
+            return stream.read().decode("utf-8", errors="replace")[-limit:]
     except OSError:
         return ""
 
@@ -542,7 +558,7 @@ def check_ansys_installation() -> str:
 def write_ansys_script(output_path: str, content: str, overwrite: bool = False) -> str:
     """Write an Ansys automation script with guarded extension and overwrite checks.
 
-    Supported extensions are .wbjn, .py, .tcl, .rpl, .jou, .ccl, .pre, and
+    Supported extensions are .inp, .dat, .wbjn, .py, .tcl, .rpl, .jou, .ccl, .pre, and
     .cse. Existing files are preserved unless overwrite=True.
     """
     path = _as_path(output_path)
@@ -1469,7 +1485,7 @@ def run_spaceclaim_script(
 
     artifact = _expected_output_status(expected_output, before=artifact_before)
     ok = result["returncode"] == 0 and (
-        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+        not artifact["required"] or (artifact["updated"] is True and (artifact["size_bytes"] or 0) > 0)
     )
     return _json(
         {
@@ -1513,7 +1529,7 @@ def run_cfx_pre_session(
 
     artifact = _expected_output_status(expected_output, before=artifact_before)
     ok = result["returncode"] == 0 and (
-        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+        not artifact["required"] or (artifact["updated"] is True and (artifact["size_bytes"] or 0) > 0)
     )
     return _json(
         {
@@ -1586,7 +1602,7 @@ def run_cfx_post_session(
 
     artifact = _expected_output_status(expected_output, before=artifact_before)
     ok = result["returncode"] == 0 and (
-        not artifact["required"] or (artifact["exists"] is True and artifact["updated"] is True)
+        not artifact["required"] or (artifact["updated"] is True and (artifact["size_bytes"] or 0) > 0)
     )
     return _json(
         {
@@ -1649,7 +1665,7 @@ def run_workbench_journal(
         and (log_updated is not False if completion_marker else True)
         and (
             not artifact["required"]
-            or (artifact["exists"] is True and artifact["updated"] is True)
+            or (artifact["updated"] is True and (artifact["size_bytes"] or 0) > 0)
         )
     )
     return _json(
@@ -1666,6 +1682,64 @@ def run_workbench_journal(
             **result,
         }
     )
+
+
+@mcp.tool()
+def generate_ansys_mesh(
+    geometry_file: str,
+    project_dir: str = "",
+    element_size_mm: float | None = None,
+    controls_script: str = "",
+    timeout_seconds: int = 900,
+) -> str:
+    """Generate a mesh from geometry in a standalone Workbench Ansys Meshing system.
+
+    Optionally set a global element size in mm and run a Meshing Python script
+    to add custom controls before generation. Return mesh statistics, a
+    reopened .wbpj and the exported .meshdat. No physics setup or solve.
+    """
+    geometry = _as_path(geometry_file)
+    if not geometry.is_file():
+        return _json({"ok": False, "error": f"Geometry file not found: {geometry}"})
+    if element_size_mm is not None and (not math.isfinite(element_size_mm) or element_size_mm <= 0):
+        return _json({"ok": False, "error": "element_size_mm must be finite and positive"})
+    if timeout_seconds <= 0:
+        return _json({"ok": False, "error": "timeout_seconds must be positive"})
+    script = _as_path(controls_script) if controls_script else None
+    if script is not None and (script.suffix.lower() != ".py" or not script.is_file()):
+        return _json({"ok": False, "error": f"Expected a Meshing Python script: {script}"})
+
+    parent = _as_path(project_dir) if project_dir else RUNS_DIR
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="ansys-meshing-", dir=parent))
+    project = directory / "meshing.wbpj"
+    project_files = directory / "meshing_files"
+    mesh_file = directory / "meshing.meshdat"
+    stats_file = directory / "mesh-stats.json"
+    journal = directory / "generate_mesh.wbjn"
+    log = directory / "meshing.log"
+    config = {
+        "directory": str(directory), "geometry": str(geometry),
+        "project": str(project), "mesh_file": str(mesh_file), "log": str(log),
+        "element_size_mm": element_size_mm,
+        "controls_script": str(script) if script else "",
+    }
+    template = (SERVER_ROOT / "ansys_meshing.wbjn").read_text(encoding="utf-8")
+    journal.write_text("import json\nconfig = json.loads(%r)\n" % json.dumps(config) + template, encoding="utf-8")
+
+    execution = json.loads(run_workbench_journal(
+        str(journal), str(directory), log_file=str(log),
+        completion_marker="ANSYS_MESH_REOPENED", expected_output=str(project),
+        timeout_seconds=timeout_seconds,
+    ))
+    artifacts_ready = project_files.is_dir() and mesh_file.is_file() and mesh_file.stat().st_size > 0
+    reopened = execution["ok"] and artifacts_ready
+    return _json({
+        "ok": reopened, "reopened": reopened, "geometry_file": str(geometry),
+        "project_file": str(project), "project_files": str(project_files), "mesh_file": str(mesh_file),
+        "statistics_file": str(stats_file), "statistics": _read_json(stats_file),
+        "journal": str(journal), "log_file": str(log), "execution": execution,
+    })
 
 
 @mcp.tool()
@@ -1894,7 +1968,7 @@ def run_mapdl_input(
     except subprocess.TimeoutExpired:
         return _json({"ok": False, "error": f"Timed out after {timeout_seconds}s", "input_file": str(inp)})
 
-    out_tail = out_file.read_text(encoding="utf-8", errors="replace")[-12000:] if out_file.exists() else ""
+    out_tail = _read_tail(out_file)
     return _json(
         {
             "ok": result["returncode"] == 0,
@@ -2119,6 +2193,61 @@ finally:
             "log_tail": log_text[-8000:],
         }
     )
+
+
+@mcp.tool()
+def run_system_coupling_script(script_path: str, workdir: str = "", timeout_seconds: int = 3600) -> str:
+    """Run a standalone System Coupling Python script in batch mode."""
+    executable = Path(os.environ.get("ANSYS_SYSTEM_COUPLING",
+        str(RUNWB2.parents[3] / "SystemCoupling" / "bin" / "systemcoupling.bat")))
+    script = _as_path(script_path)
+    if not executable.is_file() or not script.is_file():
+        return _json({"ok": False, "error": "Executable or script does not exist",
+                      "executable": str(executable), "script": str(script)})
+    cwd = _as_path(workdir) if workdir else script.parent
+    cwd.mkdir(parents=True, exist_ok=True)
+    # Windows executes the vendor batch launcher through cmd.exe.
+    values = [str(executable), "-R", str(script)]
+    if any(any(c in value for c in ['"', "%", "\n", "\r"]) for value in values):
+        return _json({"ok": False, "error": "Unsupported batch argument character"})
+    command = '"' + " ".join('"' + value + '"' for value in values) + '"'
+    args = '"' + os.environ.get("COMSPEC", "cmd.exe") + '" /d /v:off /s /c ' + command
+    try:
+        result = _run_process(args, cwd, timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return _json({"ok": False, "error": "System Coupling timed out", "workdir": str(cwd)})
+    return _json({"ok": result["returncode"] == 0, "process": result, "workdir": str(cwd)})
+
+
+@mcp.tool()
+def start_ansys_job(tool: str, arguments: dict[str, Any], request_id: str = "") -> str:
+    """Start a batch run and return a persistent job_id. Reuse a UUID request_id for retry safety."""
+    return _json(simulation_jobs.submit(RUNS_DIR / "jobs", tool, arguments, request_id))
+
+
+@mcp.tool()
+def get_ansys_job(job_id: str) -> str:
+    """Inspect a background job after reconnecting, including its latest console output."""
+    path = simulation_jobs.job_path(RUNS_DIR / "jobs", job_id)
+    return _json({**simulation_jobs.status(path), "console_tail": _read_tail(path / "console.log")})
+
+
+@mcp.tool()
+def stop_ansys_job(job_id: str) -> str:
+    """Stop this background job and the local processes launched within its Windows job."""
+    return _json(simulation_jobs.stop(simulation_jobs.job_path(RUNS_DIR / "jobs", job_id)))
+
+
+@mcp.tool()
+def diagnose_ansys_log(log_file: str) -> str:
+    """Find recognized error messages, their lines and troubleshooting hints in a solver log."""
+    return _json(simulation_checks.diagnose(_as_path(log_file)))
+
+
+@mcp.tool()
+def verify_simulation(csv_file: str, criteria: list[simulation_checks.MetricLimit]) -> str:
+    """Check metric,unit,value CSV rows against inclusive limits in matching units."""
+    return _json(simulation_checks.verify(_as_path(csv_file), criteria))
 
 
 if __name__ == "__main__":

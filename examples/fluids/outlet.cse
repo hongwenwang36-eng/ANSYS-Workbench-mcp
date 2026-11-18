@@ -1,0 +1,19 @@
+! my ($p, $pu) = evaluate('areaAve(Pressure)@out');
+! my ($t, $tu) = evaluate('massFlowAve(Temperature)@out');
+! open(DATA, ">outlet.csv") or die $!;
+! print DATA "pressure [Pa],temperature [K]\n$p,$t\n";
+! close(DATA);
+CONTOUR: Outlet Temperature
+  Location List = out
+  Colour Variable = Temperature
+  Colour Map = Default Colour Map
+END
+>show /CONTOUR:Outlet Temperature
+HARDCOPY:
+  Hardcopy Filename = outlet.png
+  Hardcopy Format = png
+  Image Width = 1200
+  Image Height = 900
+  Use Screen Size = Off
+END
+>print

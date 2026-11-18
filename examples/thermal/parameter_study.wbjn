@@ -1,0 +1,51 @@
+# encoding: utf-8
+import os
+import traceback
+
+root = __RUN_DIR__
+project = os.path.join(root, "thermal.wbpj")
+log = open(os.path.join(root, "workbench.log"), "w")
+try:
+    Reset()
+    template = GetTemplate(TemplateName="Mechanical APDL")
+    steady = template.CreateSystem()
+    steady.DisplayText = "Steady conduction - parameter study"
+    container = steady.GetContainer(ComponentName="Setup")
+    deck = container.AddInputFile(FilePath=os.path.join(root, "steady.dat"))
+    deck.PublishMapdlParameter(Name="HOTEND")
+    deck.PublishMapdlParameter(Name="TMID", IsDirectOutput=True)
+    transient = template.CreateSystem()
+    transient.DisplayText = "Transient heating and thermal expansion"
+    transient.GetContainer(ComponentName="Setup").AddInputFile(FilePath=os.path.join(root, "transient_expansion.dat"))
+    p_in = Parameters.GetParameter(Name="P1")
+    p_out = Parameters.GetParameter(Name="P2")
+    p_in.DisplayText = "Hot end (degC)"
+    p_out.DisplayText = "Midpoint (degC)"
+    p_in.Expression = "100"
+    Save(FilePath=project, Overwrite=True)
+    Update()
+    base = Parameters.GetDesignPoint(Name="0")
+    alt = Parameters.CreateDesignPoint()
+    alt.SetParameterExpression(Parameter=p_in, Expression="60")
+    alt.Retained = True
+    UpdateAllDesignPoints(DesignPoints=[alt])
+    Save(Overwrite=True)
+    Reset()
+    Open(FilePath=project)
+    assert len(Parameters.GetAllParameters()) == 2
+    p_out = Parameters.GetParameter(Name="P2")
+    with open(os.path.join(root, "design_points.csv"), "w") as table:
+        table.write("design_point,hot_degC,midpoint_degC\n")
+        for point_name, hot, expected in [("0", 100, 60), ("1", 60, 40)]:
+            point = Parameters.GetDesignPoint(Name=point_name)
+            value = float(str(point.GetParameterValue(Parameter=p_out)).split()[0])
+            actual_hot = float(str(point.GetParameterValue(Parameter=Parameters.GetParameter(Name="P1"))).split()[0])
+            assert abs(actual_hot - hot) < 1e-6
+            table.write("%s,%s,%s\n" % (point_name, actual_hot, value))
+            assert abs(value - expected) < 1e-6, (value, expected)
+    log.write("REOPEN_AND_DP_CHECK_PASSED\n")
+except:
+    log.write(traceback.format_exc())
+    raise
+finally:
+    log.close()

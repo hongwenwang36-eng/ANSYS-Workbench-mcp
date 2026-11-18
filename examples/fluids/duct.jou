@@ -1,0 +1,10 @@
+/file/read-case duct.msh
+/mesh/check
+/define/models/viscous/laminar yes
+/define/boundary-conditions/set/velocity-inlet inlet () vmag no 1 quit
+/solve/initialize/hyb-initialization
+/solve/iterate 100
+/file/write-case-data duct.cas.h5
+/report/surface-integrals/area-weighted-avg outlet () x-velocity no
+/report/surface-integrals/area-weighted-avg inlet () x-velocity no
+/exit yes

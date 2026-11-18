@@ -1,0 +1,9 @@
+antype,harmic
+hropt,full
+harfrq,0,5
+kbc,1
+nsubst,5
+f,9,fx,100
+outres,nsol,all
+solve
+finish

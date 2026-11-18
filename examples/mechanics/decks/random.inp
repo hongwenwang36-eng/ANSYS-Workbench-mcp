@@ -1,0 +1,13 @@
+/solu
+antype,spectr
+spopt,psd
+dmprat,0.02
+psdunit,1,force
+psdfrq,1,1,1,100
+psdval,1,1,1
+f,9,fx,1
+pfact,1,node
+psdres,disp,rel
+psdcom,0
+solve
+finish

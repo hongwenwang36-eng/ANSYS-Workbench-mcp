@@ -11,26 +11,38 @@
 ![Ansys](https://img.shields.io/badge/Tested-Ansys%202025%20R1-FFB71B)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Control **SpaceClaim, Ansys Workbench, System Coupling, ICEM CFD, MAPDL, Fluent, CFX-Pre, CFX Solver, and CFD-Post** directly from Codex or another MCP client.
+Control **SpaceClaim, Ansys Workbench, Ansys Meshing, System Coupling, ICEM CFD, MAPDL, Fluent, CFX-Pre, CFX Solver, and CFD-Post** directly from Codex or another MCP client.
 
 The project uses officially supported Ansys entry points—journals, Workbench scripting, Tcl/Replay, and batch execution—without relying on mouse clicks or screen recognition.
 
 > [!NOTE]
 > This is not an official Ansys product. It currently targets Windows and has been tested on a physical installation of Ansys 2025 R1.
 
-## Capabilities
+## Supported simulations
 
-| Module | Capabilities |
-| --- | --- |
-| Scripts and SpaceClaim | Safely write `.wbjn/.py/.tcl/.rpl/.jou/.ccl/.pre/.cse` files and run SpaceClaim Python in batch mode |
-| Workbench | Start and stop the bridge, execute scripts, inspect/open/save/update projects, and create analysis systems |
-| ICEM CFD | Start GUI or batch sessions, execute Tcl/Replay, discover commands, and run Replay files |
-| Mechanical / MAPDL | Create thermal, structural, and dynamic systems; run APDL input files directly |
-| Fluent | Run journals/TUI directly; create a Workbench system when a compatible template is installed |
-| CFX | Run CFX-Pre sessions, CFX Solver `.def` files, and CFD-Post `.cse` files in batch mode |
-| System Coupling / FSI | Create CFX–Transient Structural two-way FSI projects, connect participants, configure transfers and solver controls, then run or export them |
+| Simulation | Solver | Verified scope |
+| --- | --- | --- |
+| Static and nonlinear structural | Mechanical APDL | Linear statics, frictionless contact, and bilinear plasticity |
+| Structural dynamics | Mechanical APDL | Modal, prestressed modal, harmonic response, transient, response spectrum, and random vibration |
+| Thermal | Mechanical, Mechanical APDL | Steady conduction and transient heating |
+| Thermal–structural coupling | Mechanical APDL | Transfer a temperature field to the structural model and compute thermal expansion |
+| Fluid flow | Fluent, CFX | Duct flow, static mixing, and cavitation |
+| Conjugate heat transfer | Fluent | Fluid and solid temperature fields with an interface heat-flow check |
+| Two-way fluid–structure interaction | System Coupling, Fluent, Mechanical APDL | Exchange fluid forces and structural displacements. The CFX–Mechanical Workbench route was verified at the system topology level |
 
-Supported Workbench systems include Steady-State Thermal, Transient Thermal, Static Structural, Transient Structural, Modal, Harmonic Response, Response Spectrum, Random Vibration, CFX, System Coupling, and any available Fluent templates.
+## Verified examples
+
+**Nonlinear contact · Axial displacement**
+
+![Nonlinear contact · Axial displacement](docs/images/nonlinear-contact-displacement.png)
+
+**Steady heat conduction · Temperature**
+
+![Steady heat conduction · Temperature](docs/images/steady-thermal-temperature.png)
+
+**Fluent cavitation · Vapor volume fraction**
+
+![Fluent cavitation · Vapor volume fraction](docs/images/fluent-cavitation-vapor-fraction.png)
 
 ## How it works
 
@@ -40,7 +52,7 @@ flowchart LR
     B -->|JSON file IPC| C[Workbench bridge journal]
     B -->|Tcl file IPC| D[ICEM CFD bridge]
     B -->|Batch process| E[SpaceClaim / MAPDL / Fluent / CFX-Pre/Solver/Post]
-    C --> F[Ansys Workbench / System Coupling]
+    C --> F[Ansys Workbench / Ansys Meshing / System Coupling]
     D --> G[ICEM CFD]
 ```
 
@@ -84,135 +96,32 @@ ANSYS_CFX_SOLVE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5solve.exe'
 ANSYS_CFX_PRE = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5pre.exe'
 ANSYS_CFX_POST = 'D:\Program Files\ANSYS Inc\v251\CFX\bin\cfx5post.exe'
 ANSYS_ICEM_CFD = 'D:\Program Files\ANSYS Inc\v251\icemcfd\win64_amd\bin\icemcfd.bat'
+ANSYS_SYSTEM_COUPLING = 'D:\Program Files\ANSYS Inc\v251\SystemCoupling\bin\systemcoupling.bat'
 ```
 
 Adjust the environment variables if Ansys is installed elsewhere. Restart Codex after saving the configuration.
 
 ### 3. Check the connection
 
-Call these tools in Codex:
+Call `check_ansys_installation` to check the executable paths. Start and check the bridge when working with the current Workbench project.
 
 ```text
-check_ansys_installation
 start_workbench_bridge
 check_workbench_connection
 ```
 
-After the connection succeeds, Codex can create systems, execute scripts, and operate on projects.
+Standalone Ansys Meshing and solver batch tools can run directly.
 
-## Common operations
+## Skills and examples
 
-### Workbench
+The 12 project skills cover workflows, geometry, meshing, structural and dynamic analysis, thermal analysis, CFD, coupling, parameter studies, diagnosis, verification, and postprocessing. [Skill catalog and examples](docs/skills-and-validation.md)
 
-```text
-# Create a Steady-State Thermal system
-create_steady_state_thermal_system_live(
-  project_dir="D:/ansys-projects",
-  project_name="thermal_case"
-)
-
-# Create a CFX system
-create_cfx_flow_system_live(
-  project_dir="D:/ansys-projects",
-  project_name="cfx_case"
-)
-
-# Inspect and save the current project
-get_project_info
-save_project
-```
-
-For one-off tasks that do not require a persistent bridge, use `run_workbench_journal`, `create_workbench_analysis_system`, or `create_and_run_thermal_bar_demo`.
-
-### End-to-end CFX equilibrium workflow
-
-The new execution tools cover a geometry-to-equilibrium loop: use `write_ansys_script` with `run_spaceclaim_script` for geometry, the ICEM bridge or Replay runner for meshing, `run_cfx_pre_session` for setup and `.def` generation, `run_cfx_solver` for the solve, `run_cfx_post_session` for load/moment and field exports, and `run_workbench_journal` for the outer parameter-update and Newton-Raphson or damped iteration.
-
-Both `run_cfx_post_session` and `run_workbench_journal` can require a newly generated output. The latter can additionally require a fresh log containing a completion marker, so stale files cannot be mistaken for a successful new iteration.
-
-```text
-run_cfx_post_session(
-  session_file="D:/cases/export_loads.cse",
-  result_file="D:/cases/final.res",
-  expected_output="D:/cases/load_and_moment.csv"
-)
-
-run_workbench_journal(
-  journal_path="D:/cases/equilibrium_iteration.wbjn",
-  log_file="D:/cases/equilibrium_iteration.log",
-  completion_marker="ITERATION_CONVERGED",
-  expected_output="D:/cases/equilibrium_converged.wbpj",
-  timeout_seconds=7200
-)
-```
-
-### CFX–Mechanical two-way FSI
-
-```text
-# 1. Create three systems and connect both participants
-create_cfx_mechanical_fsi_project_live(
-  project_dir="D:/ansys-projects/fsi",
-  project_name="cfx_mechanical_fsi"
-)
-
-# 2. Complete meshing, transient physics, and coupling boundaries in CFX
-#    and Mechanical, then refresh Setup
-# 3. Query the participant, region, and variable names actually published
-get_system_coupling_status_live
-
-# 4. Configure coupling time step and iteration limits
-configure_system_coupling_settings_live(
-  step_size="0.001 [s]",
-  end_time="0.1 [s]",
-  minimum_iterations=1,
-  maximum_iterations=10
-)
-
-# 5. Use the exact names returned above to create both transfers
-configure_cfx_mechanical_two_way_fsi_live(...)
-
-# 6. Validate, then solve
-run_system_coupling_solution_live
-```
-
-Two-way FSI contains two transfers: Mechanical displacement → CFX mesh displacement, and CFX fluid force → Mechanical load. The project-creation tool does not invent meshes, materials, boundaries, or interface regions; the actual model must supply those physical inputs.
-
-### ICEM CFD
-
-```text
-# Start a headless session
-start_icem_bridge(batch=true)
-
-# Inspect the session and Blocking commands
-get_icem_session_info
-list_icem_commands(pattern="ic_hex_*", limit=300)
-
-# Execute Tcl/Replay
-execute_icem_script(script="ic_load_tetin {D:/cases/model.tin}")
-
-# Run a Replay file once
-run_icem_replay(
-  replay_file="D:/cases/mesh.rpl",
-  workdir="D:/cases"
-)
-```
-
-For reliable parameterized execution, record commands with ICEM Replay Control first and then pass them to MCP.
-
-### Direct solver invocation
-
-```text
-run_mapdl_input(input_file="D:/cases/model.dat")
-run_fluent_journal(journal_path="D:/cases/run.jou")
-run_cfx_pre_session(session_file="D:/cases/setup.pre", expected_output="D:/cases/model.def")
-run_cfx_solver(definition_file="D:/cases/model.def")
-run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/model.res")
-```
+[Full validation record](docs/validation-record.md) · [Ansys Meshing and ICEM examples](examples/meshing/README.md)
 
 ## MCP tools
 
 <details>
-<summary>Show all 50 tools</summary>
+<summary>Show all 57 tools</summary>
 
 | Tool | Description |
 | --- | --- |
@@ -259,9 +168,16 @@ run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/m
 | `run_spaceclaim_script` | Run SpaceClaim Python in batch mode and verify the geometry output |
 | `run_cfx_pre_session` | Run a CFX-Pre session in batch mode and verify `.cfx/.def` output |
 | `run_cfx_post_session` | Run a CFD-Post `.cse` file in batch mode and verify exported output |
+| `generate_ansys_mesh` | Generate and export a mesh in a standalone Ansys Meshing system |
 | `run_workbench_journal` | Run a Workbench journal in batch mode with optional marker and output checks |
 | `create_workbench_analysis_system` | Create an analysis system in batch mode |
 | `create_steady_state_thermal_system` | Create a Steady-State Thermal system in batch mode |
+| `run_system_coupling_script` | System Coupling Python batch |
+| `start_ansys_job` | Submit an idempotent background batch job |
+| `get_ansys_job` | Read persistent job status and console |
+| `stop_ansys_job` | Stop a background process tree |
+| `diagnose_ansys_log` | Locate solver messages and line numbers |
+| `verify_simulation` | Check CSV metrics against bounds and units |
 | `run_mapdl_input` | Run a MAPDL input file |
 | `run_fluent_journal` | Run a Fluent journal |
 | `run_cfx_solver` | Run a CFX `.def` file |
@@ -277,27 +193,6 @@ run_cfx_post_session(session_file="D:/cases/export.cse", result_file="D:/cases/m
 | `ansys-workbench://installation` | Ansys installation-path check |
 | `ansys-workbench://icem/status` | ICEM CFD bridge status |
 
-## Validation status
-
-The following items have been verified on a physical Ansys 2025 R1 installation:
-
-- Registration of 50 MCP tools and 3 resources
-- Workbench bridge lifecycle, script execution, and project inspection/open/save/update
-- Creation of Steady-State Thermal, Transient Thermal, Static Structural, Transient Structural, Modal, Harmonic Response, Response Spectrum, Random Vibration, and CFX systems
-- System Coupling templates, CFX/Transient Structural participant connections, and saving a three-system FSI project
-- Workbench and MAPDL thermal solves: 525 nodes, 20–100 °C, and 0 MAPDL errors
-- Headless Fluent `3ddp` journal execution
-- ICEM CFD bridge, Tcl/Replay, command discovery, and batch mode
-- SpaceClaim, CFX-Pre, and CFD-Post batch entry points with fresh-output checks
-- CFD-Post `.cse` export of PAD pressure, coordinates, and face connectivity from a real `.res` file
-
-Current limitations:
-
-- No common Fluent template was found in the tested Workbench installation; `run_fluent_journal` has been verified instead.
-- The path and invocation logic of `run_cfx_solver` have been checked, but a complete solve still requires a valid user-provided `.def` file.
-- The MCP exposes the complete execution chain, but it does not guess geometry parameters, boundary conditions, convergence limits, or a Newton-Raphson Jacobian; model-specific scripts must define and validate them.
-- Two-way transfers and coupled solves require real CFX/Mechanical meshes, System Coupling regions, and variables. An empty project validates only the system topology, not a physical case.
-
 ## Troubleshooting
 
 | Problem | Resolution |
@@ -308,14 +203,31 @@ Current limitations:
 | ICEM bridge times out | Start with `start_icem_bridge(batch=true)` and inspect `icem/icem_bridge.log` |
 | Fluent template is unavailable | Use `run_fluent_journal` or specify an installed template with `template_name` |
 
+If the MCP client is unavailable, run `.\.venv\Scripts\python.exe stop_mcp.py` from the repository root to send a stop signal to the bridge runtime directory.
+
 ## Development and testing
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The tests validate the README, all 50 registered tools, all 3 resources, bridge-version alignment, safe script writing, CFX pre/post command construction, and ICEM IPC behavior.
+The tests validate the README, all 57 registered tools, all 3 resources, bridge-version alignment, safe script writing, CFX pre/post command construction, and ICEM IPC behavior.
 
 ## License
 
 [MIT](LICENSE)
+
+## Changes in this version
+
+### Added
+
+- Added 12 ANSYS skills covering geometry, meshing, simulation, verification, and postprocessing.
+- Added `generate_ansys_mesh` to create a standalone Mesh project, apply mesh controls, export `.meshdat`, and check its statistics after reopening.
+- Added background job submission, status and cancellation, log diagnostics, CSV verification, and standalone System Coupling batch execution. The MCP tool count grew from 50 to 57.
+- Added reproducible examples and validation records for structures, dynamics, thermal analysis, meshing, Fluent, CFX, and coupling.
+
+### Changed and fixed
+
+- Batch output checks reject empty files. Cancelling a background task stops processes belonging to its Windows job.
+- Fixed Fluent batch image export, Mechanical nodal CSV export, and image refresh after reopening a project.
+- Reorganized the five language editions around supported simulations, verified contour plots, and version changes.
