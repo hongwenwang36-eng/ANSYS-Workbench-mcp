@@ -128,7 +128,7 @@ check_workbench_connection
 ## MCP ツール
 
 <details>
-<summary>全57ツールを表示</summary>
+<summary>全79ツールを表示</summary>
 
 | ツール | 説明 |
 | --- | --- |
@@ -189,6 +189,28 @@ check_workbench_connection
 | `run_fluent_journal` | Fluent journal を実行 |
 | `run_cfx_solver` | CFX `.def` ファイルを実行 |
 | `create_and_run_thermal_bar_demo` | 熱解析デモを batch モードで実行 |
+| `update_knowledge_base` | ローカル知識索引を再構築 |
+| `search_knowledge` | 出典付き資料を検索 |
+| `search_commands` | コマンドやスクリプトを検索 |
+| `search_examples` | 解析例を検索 |
+| `search_errors` | 診断記録を検索 |
+| `get_document` | ID で原文を取得 |
+| `inspect_model` | モデルのコピーを検査 |
+| `edit_model` | 指定したモデル設定を変更 |
+| `inspect_geometry` | ボディと面の ID を取得 |
+| `inspect_mesh` | メッシュ統計を取得 |
+| `get_boundary_conditions` | 境界条件と適用範囲を取得 |
+| `audit_model` | モデル設定を点検 |
+| `compare_model` | モデルレポートを比較 |
+| `snapshot_model` | ハッシュ付きでモデルを保存 |
+| `restore_model` | 検証して新規フォルダーに復元 |
+| `start_workflow` | ワークフローを開始 |
+| `get_workflow` | 状態と検証結果を取得 |
+| `resume_workflow` | 中断した処理を再開 |
+| `stop_workflow` | 現在のジョブと後続工程を停止 |
+| `verify_physics` | 収支と基準値を検証 |
+| `verify_refinement` | メッシュ幅や時間刻みの影響を検証 |
+| `verify_coupling` | 双方向連成の履歴を検証 |
 
 </details>
 
@@ -218,7 +240,7 @@ MCP クライアントが使えない場合は、リポジトリのルートで 
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-テストでは README、登録済みの57ツール、3リソース、bridge バージョンの一致、安全なスクリプト書き込み、CFX 前後処理コマンド、ICEM IPC の動作を確認します。
+テストでは README、登録済みの79ツール、3リソース、bridge バージョンの一致、安全なスクリプト書き込み、CFX 前後処理コマンド、ICEM IPC の動作を確認します。
 
 ## ライセンス
 
@@ -226,14 +248,20 @@ MCP クライアントが使えない場合は、リポジトリのルートで 
 
 ## このバージョンの変更
 
-### 追加
+### 0.6.0
+
+ローカル検索、モデル検査・編集、スナップショット、再試行可能なワークフロー、物理量の検証を追加し、12 のスキルを更新しました。 [使用方法と検証](docs/workflows-and-knowledge.md)
+
+### 0.5.0
+
+#### 追加
 
 - 形状、メッシュ、解析、検証、ポスト処理などを扱う 12 個の ANSYS Skill を追加。
 - `generate_ansys_mesh` を追加。形状から独立した Mesh プロジェクトを作成し、メッシュ制御を適用して `.meshdat` を出力し、再オープン後に統計を確認。
 - バックグラウンドジョブの開始・照会・停止、ログ診断、CSV の数値検証、独立した System Coupling のバッチ実行を追加。MCP ツールは 50 個から 57 個に増加。
 - 構造・動力学、熱、メッシュ、Fluent、CFX、連成の再実行可能な例と検証記録を追加。
 
-### 変更と修正
+#### 変更と修正
 
 - バッチ出力の検証を強化し、空のファイルを失敗として扱うように変更。バックグラウンドジョブの停止時に、所属する Windows ジョブのプロセスを終了。
 - Fluent のバッチ画像出力、Mechanical の節点 CSV 出力、プロジェクト再オープン後の画像更新を修正。

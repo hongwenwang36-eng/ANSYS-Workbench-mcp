@@ -13,3 +13,5 @@ description: 使用 Fluent 或 CFX 求解稳态、瞬态、流体传热、旋转
 
 
 配套可复跑基准与适用范围见 [examples/fluids](../../../examples/fluids/README.md)。工作目录以仓库根目录为准，运行产物保存到 runs。
+
+用 `inspect_model` 读取 Fluent case 时给出实际的 `dimension`，从 `get_boundary_conditions` 返回的区域名选择入口或出口。用 `edit_model` 修改副本并重开核对。连续性检查用 `verify_physics` 汇总带符号的进出口质量流量，单位统一为 kg/s。

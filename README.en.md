@@ -128,7 +128,7 @@ The 12 project skills cover workflows, geometry, meshing, structural and dynamic
 ## MCP tools
 
 <details>
-<summary>Show all 57 tools</summary>
+<summary>Show all 79 tools</summary>
 
 | Tool | Description |
 | --- | --- |
@@ -189,6 +189,28 @@ The 12 project skills cover workflows, geometry, meshing, structural and dynamic
 | `run_fluent_journal` | Run a Fluent journal |
 | `run_cfx_solver` | Run a CFX `.def` file |
 | `create_and_run_thermal_bar_demo` | Run the thermal-analysis demo in batch mode |
+| `update_knowledge_base` | Rebuild the local knowledge index |
+| `search_knowledge` | Retrieve cited knowledge |
+| `search_commands` | Find commands and journals |
+| `search_examples` | Find simulation examples |
+| `search_errors` | Retrieve diagnostic evidence |
+| `get_document` | Read indexed excerpts by ID |
+| `inspect_model` | Inspect a native model copy |
+| `edit_model` | Edit a selected model setting |
+| `inspect_geometry` | List body and face IDs |
+| `inspect_mesh` | Read mesh statistics |
+| `get_boundary_conditions` | Read boundary conditions and scopes |
+| `audit_model` | Audit model settings |
+| `compare_model` | Compare model reports |
+| `snapshot_model` | Snapshot a model with file hashes |
+| `restore_model` | Verify and restore into a new directory |
+| `start_workflow` | Start a persistent workflow |
+| `get_workflow` | Read step status and accepted outputs |
+| `resume_workflow` | Resume orchestration |
+| `stop_workflow` | Stop the active job and later stages |
+| `verify_physics` | Check balances and references |
+| `verify_refinement` | Check mesh or time-step refinement |
+| `verify_coupling` | Verify two-way coupling histories |
 
 </details>
 
@@ -218,7 +240,7 @@ If the MCP client is unavailable, run `.\.venv\Scripts\python.exe stop_mcp.py` f
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The tests validate the README, all 57 registered tools, all 3 resources, bridge-version alignment, safe script writing, CFX pre/post command construction, and ICEM IPC behavior.
+The tests validate the README, all 79 registered tools, all 3 resources, bridge-version alignment, safe script writing, CFX pre/post command construction, and ICEM IPC behavior.
 
 ## License
 
@@ -226,14 +248,20 @@ The tests validate the README, all 57 registered tools, all 3 resources, bridge-
 
 ## Changes in this version
 
-### Added
+### 0.6.0
+
+Adds local hybrid retrieval, native model inspection and editing, snapshots, recoverable workflows and physics checks. Updates all 12 skills. [Usage and validation](docs/workflows-and-knowledge.md)
+
+### 0.5.0
+
+#### Added
 
 - Added 12 ANSYS skills covering geometry, meshing, simulation, verification, and postprocessing.
 - Added `generate_ansys_mesh` to create a standalone Mesh project, apply mesh controls, export `.meshdat`, and check its statistics after reopening.
 - Added background job submission, status and cancellation, log diagnostics, CSV verification, and standalone System Coupling batch execution. The MCP tool count grew from 50 to 57.
 - Added reproducible examples and validation records for structures, dynamics, thermal analysis, meshing, Fluent, CFX, and coupling.
 
-### Changed and fixed
+#### Changed and fixed
 
 - Batch output checks reject empty files. Cancelling a background task stops processes belonging to its Windows job.
 - Fixed Fluent batch image export, Mechanical nodal CSV export, and image refresh after reopening a project.

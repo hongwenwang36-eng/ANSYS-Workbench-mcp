@@ -15,3 +15,5 @@ MAPDL 在 /POST1 选择结果集，输出 PLNSOL/PLESOL 并使用 PNG 图形设�
 Fluent 的 -g 会关闭图片图形设备。需要批处理导图时使用 run_fluent_journal 的 gui=True 和 extra_args="-gu"，使图形渲染保留且主界面隐藏。Mechanical 批处理中 ExportToTextFile 若产生空文件，可按配套热基准从 PlotData 导出节点值，并检查节点数、单位及解析误差。
 
 Mechanical 2025 R1 重开工程后，温度结果类别是 DataModelObjectCategory.TemperatureResult，热流结果是 TotalHeatFlux。用 Solution.GetChildren 按实际类别取对象并断言数量，在 result.Activate() 后设置图形偏好。导出检查文件修改时间和大小，Workbench SendCommand 可能将编辑器内部错误保留在其日志中，主控应校验脚本生成的完成标记及产物。
+
+用 `get_workflow` 返回的已验收 artifacts 选择后处理输入，同一目录名可能在多个重试中出现。计算参考值对比时记录测点、坐标系、结果时刻和单位，再将 CSV 交给 `verify_physics`。

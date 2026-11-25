@@ -11,3 +11,5 @@ description: 发布 Workbench 参数，运行设计点、敏感性分析及带�
 
 
 配套可复跑基准与适用范围见 [examples/thermal](../../../examples/thermal/README.md)。工作目录以仓库根目录为准，运行产物保存到 runs。
+
+用 `snapshot_model` 保存基准，再用 `edit_model(field=parameter)` 修改输入参数，重开副本用 `compare_model` 对比参数。参数表达式改变后，求解输出须经设计点更新才能用于比较。

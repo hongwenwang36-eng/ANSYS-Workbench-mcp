@@ -12,3 +12,5 @@ description: 组织跨模块 Workbench 工程、选择分析系统、跟踪求�
 
 
 后台任务、数值检查的参数与用法见 [运行说明](../../../docs/skills-and-validation.md)。
+
+`start_workflow` 以依赖顺序接收 steps，通过 `inputs` 中的 `@步骤名/输出文件` 传递已验收文件，每次尝试使用独立目录。用 `get_workflow` 读取作业号和数值验收记录。编排器中断后用 `resume_workflow` 对账；停止时用 `stop_workflow`。

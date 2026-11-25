@@ -13,3 +13,5 @@ ICEM 可用 `run_icem_replay` 或 `start_icem_bridge` 加 `execute_icem_script` 
 
 
 配套可复跑基准与适用范围见 [examples/meshing](../../../examples/meshing/README.md)。工作目录以仓库根目录为准，运行产物默认保存到 runs。
+
+普通 Meshing 输出的 `mesh-stats.json` 可直接传给 `inspect_mesh`。在 Mechanical 工程上，`edit_model` 的 `face_sizing` 使用最新几何报告中的面号和带单位尺寸。以同一监测量比较至少三档网格的 `spacing,metric,unit,value` 表。

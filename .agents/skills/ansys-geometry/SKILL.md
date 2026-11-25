@@ -11,3 +11,5 @@ description: 用 SpaceClaim 建立、导入、修复并参数化 Workbench 几�
 
 
 配套可复跑基准与适用范围见 [examples/thermal](../../../examples/thermal/README.md)。工作目录以仓库根目录为准，运行产物保存到 runs。
+
+用 `inspect_model` 指定 Mechanical 系统后，`inspect_geometry` 返回体 ID 与面 ID。替换 `geometry_file` 后重新读取 ID，重新核对载荷与命名面，旧拓扑上的面号可能已经改变。

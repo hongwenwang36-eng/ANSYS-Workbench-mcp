@@ -15,3 +15,5 @@ description: 设置热结构、流固、共轭传热和多参与方数据传递�
 配套可复跑基准与适用范围见 [examples/fluids](../../../examples/fluids/README.md)。工作目录以仓库根目录为准，运行产物保存到 runs。
 
 独立 Fluent–MAPDL 耦合使用参与方导出的 .scp 和 System Coupling Python 脚本，通过 run_system_coupling_script 运行，路径依赖在专用目录准备。用接口 CSV 对比两侧传递和终步时间。该路线产生独立求解器结果，工程内 Results 关联需另行验证。
+
+用 `verify_coupling` 读取单个接口原始 `Interface-*.csv`。提供目标终止时间和界面 RMS、力映射偏差容限。工具检查每个时间步最终迭代的载荷与位移变化，还需另核对原始映射覆盖范围及位移空间分布。

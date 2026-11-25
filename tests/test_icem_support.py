@@ -118,7 +118,7 @@ class IcemSupportTests(unittest.TestCase):
         report = json.loads(mcp_server.check_ansys_installation())
         self.assertIn("icem_cfd", report)
         self.assertIn("icem_bridge_script", report)
-        self.assertEqual(report["version"], "0.5.0")
+        self.assertEqual(report["version"], "0.6.0")
 
     def test_documented_bridge_tools_are_defined(self) -> None:
         expected_tools = {
@@ -180,6 +180,30 @@ class IcemSupportTests(unittest.TestCase):
             "run_cfx_solver",
             "create_and_run_thermal_bar_demo",
         }
+        expected_tools.update({
+            "update_knowledge_base",
+            "search_knowledge",
+            "search_commands",
+            "search_examples",
+            "search_errors",
+            "get_document",
+            "inspect_model",
+            "edit_model",
+            "inspect_geometry",
+            "inspect_mesh",
+            "get_boundary_conditions",
+            "audit_model",
+            "compare_model",
+            "snapshot_model",
+            "restore_model",
+            "start_workflow",
+            "get_workflow",
+            "resume_workflow",
+            "stop_workflow",
+            "verify_physics",
+            "verify_refinement",
+            "verify_coupling",
+        })
         registered_tools = set(mcp_server.mcp._tool_manager._tools)
         self.assertEqual(registered_tools, expected_tools)
         for tool_name in expected_tools:

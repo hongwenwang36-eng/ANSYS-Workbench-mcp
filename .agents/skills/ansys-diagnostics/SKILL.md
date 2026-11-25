@@ -11,3 +11,5 @@ description: 定位 ANSYS 启动、许可、脚本、网格、求解及导出错
 
 
 后台任务、数值检查的参数与用法见 [运行说明](../../../docs/skills-and-validation.md)。
+
+用 `search_errors` 按原始错误文本查找已索引记录。`start_workflow` 的 `repairs` 按诊断类别依次匹配，每条记录是一次预先给定的重试参数。失败尝试目录保留，只有通过输出与数值检查的文件才传给下游。需要恢复模型时，从 `snapshot_model` 的快照调用 `restore_model` 到新目录。

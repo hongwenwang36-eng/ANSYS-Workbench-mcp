@@ -128,7 +128,7 @@ check_workbench_connection
 ## MCP 도구
 
 <details>
-<summary>57개 도구 모두 보기</summary>
+<summary>79개 도구 모두 보기</summary>
 
 | 도구 | 설명 |
 | --- | --- |
@@ -189,6 +189,28 @@ check_workbench_connection
 | `run_fluent_journal` | Fluent journal 실행 |
 | `run_cfx_solver` | CFX `.def` 파일 실행 |
 | `create_and_run_thermal_bar_demo` | 열 해석 데모를 batch 모드로 실행 |
+| `update_knowledge_base` | 로컬 지식 색인 재구축 |
+| `search_knowledge` | 출처가 있는 지식 검색 |
+| `search_commands` | 명령과 스크립트 검색 |
+| `search_examples` | 해석 사례 검색 |
+| `search_errors` | 진단 기록 검색 |
+| `get_document` | ID로 원문 조회 |
+| `inspect_model` | 모델 복사본 검사 |
+| `edit_model` | 선택한 모델 설정 변경 |
+| `inspect_geometry` | 바디 및 면 ID 조회 |
+| `inspect_mesh` | 메시 통계 조회 |
+| `get_boundary_conditions` | 경계 조건과 적용 범위 조회 |
+| `audit_model` | 모델 설정 점검 |
+| `compare_model` | 모델 보고서 비교 |
+| `snapshot_model` | 파일 해시와 함께 모델 저장 |
+| `restore_model` | 검증 후 새 폴더에 복원 |
+| `start_workflow` | 워크플로 시작 |
+| `get_workflow` | 단계 상태와 검증 결과 조회 |
+| `resume_workflow` | 중단된 워크플로 재개 |
+| `stop_workflow` | 현재 작업과 후속 단계 중지 |
+| `verify_physics` | 보존식과 기준값 검증 |
+| `verify_refinement` | 메시 및 시간 간격 세분화 검증 |
+| `verify_coupling` | 양방향 연성 이력 검증 |
 
 </details>
 
@@ -218,7 +240,7 @@ MCP 클라이언트를 사용할 수 없는 경우 저장소 루트에서 `.\.ve
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-테스트는 README, 등록된 도구 57개, 리소스 3개, bridge 버전 일치, 안전한 스크립트 작성, CFX 전후처리 명령 및 ICEM IPC 동작을 확인합니다.
+테스트는 README, 등록된 도구 79개, 리소스 3개, bridge 버전 일치, 안전한 스크립트 작성, CFX 전후처리 명령 및 ICEM IPC 동작을 확인합니다.
 
 ## 라이선스
 
@@ -226,14 +248,20 @@ MCP 클라이언트를 사용할 수 없는 경우 저장소 루트에서 `.\.ve
 
 ## 이번 버전의 변경 사항
 
-### 추가
+### 0.6.0
+
+로컬 하이브리드 검색, 모델 검사와 편집, 스냅샷 복원, 재시도 가능한 워크플로 및 물리 검증을 추가하고 12개 스킬을 업데이트했습니다. [사용 방법과 검증](docs/workflows-and-knowledge.md)
+
+### 0.5.0
+
+#### 추가
 
 - 형상, 메시, 해석, 검증 및 후처리를 다루는 ANSYS Skill 12개를 추가했습니다.
 - `generate_ansys_mesh`로 형상에서 독립 Mesh 프로젝트를 생성하고 메시 설정을 적용하며 `.meshdat`를 내보낸 후 다시 열어 통계를 확인합니다.
 - 백그라운드 작업 제출·조회·중지, 로그 진단, CSV 수치 검증, 독립 System Coupling 배치 실행을 추가했습니다. MCP 도구는 50개에서 57개로 늘었습니다.
 - 구조·동역학, 열, 메시, Fluent, CFX 및 연성의 재실행 예제와 검증 기록을 추가했습니다.
 
-### 변경 및 수정
+#### 변경 및 수정
 
 - 배치 출력 검사에서 빈 파일을 실패로 처리합니다. 백그라운드 작업을 중지하면 해당 Windows 작업의 프로세스도 종료됩니다.
 - Fluent 배치 이미지 출력, Mechanical 절점 CSV 내보내기 및 프로젝트를 다시 연 후의 이미지 갱신을 수정했습니다.

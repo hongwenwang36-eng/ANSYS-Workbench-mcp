@@ -11,3 +11,5 @@ description: 按解析解、基准、平衡、收敛及工程容差验收 ANSYS 
 
 
 后台任务、数值检查的参数与用法见 [运行说明](../../../docs/skills-and-validation.md)。
+
+同一工况中的有符号守恒或参考值用 `verify_physics`，多档网格或时间步用 `verify_refinement`，原始双向界面时间历程用 `verify_coupling`。将阈值与工程依据记录在验收输入中，报告具体失败项。

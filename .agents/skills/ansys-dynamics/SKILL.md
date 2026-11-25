@@ -21,3 +21,5 @@ MAPDL 响应谱的组合结果在 /POST1 执行求解生成的作业名 .mcom �
 配套可复跑基准与适用范围见 [examples/mechanics](../../../examples/mechanics/README.md)。工作目录以仓库根目录为准，运行产物保存到 runs。
 
 恒幅谐响应扫频在 APDL 设置 KBC,1，核对每个频率点的实际载荷。复数结果的结果集数可包含实部与虚部，导出时明确对应频率和复分量，合成幅值与相位后再比较解析值。
+
+用 `search_examples` 指定 dynamics 查找模态、谐响应、瞬态或谱分析输入。检验频率时区分 Hz 与 rad/s；比较时间步时导出相同测点、相同时间区间的峰值，交给 `verify_refinement`。

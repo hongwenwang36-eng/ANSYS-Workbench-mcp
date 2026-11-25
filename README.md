@@ -128,7 +128,7 @@ check_workbench_connection
 ## MCP 工具
 
 <details>
-<summary>展开全部 57 个工具</summary>
+<summary>展开全部 79 个工具</summary>
 
 | 工具 | 说明 |
 | --- | --- |
@@ -189,6 +189,28 @@ check_workbench_connection
 | `run_fluent_journal` | 运行 Fluent journal |
 | `run_cfx_solver` | 运行 CFX `.def` |
 | `create_and_run_thermal_bar_demo` | 批处理运行热分析示例 |
+| `update_knowledge_base` | 重建本地知识索引 |
+| `search_knowledge` | 检索知识与出处 |
+| `search_commands` | 检索脚本和命令 |
+| `search_examples` | 检索仿真案例 |
+| `search_errors` | 检索诊断记录 |
+| `get_document` | 按 ID 分页读取原文 |
+| `inspect_model` | 读取原生模型副本 |
+| `edit_model` | 修改选定模型字段 |
+| `inspect_geometry` | 读取体和面 ID |
+| `inspect_mesh` | 读取网格统计 |
+| `get_boundary_conditions` | 读取边界与作用域 |
+| `audit_model` | 审计实际模型设置 |
+| `compare_model` | 比较模型报告 |
+| `snapshot_model` | 保存模型和校验清单 |
+| `restore_model` | 校验并恢复至新目录 |
+| `start_workflow` | 启动分步工作流 |
+| `get_workflow` | 读取状态及验收结果 |
+| `resume_workflow` | 恢复中断的编排器 |
+| `stop_workflow` | 停止当前作业和后续阶段 |
+| `verify_physics` | 核对守恒和基准值 |
+| `verify_refinement` | 比较网格或时间步细化 |
+| `verify_coupling` | 验收双向耦合时间历程 |
 
 </details>
 
@@ -218,7 +240,7 @@ MCP 客户端不可用时，可在仓库根目录运行 `.\.venv\Scripts\python.
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-测试会核对 README、57 个注册工具、3 个资源、bridge 版本、脚本安全写入、CFX 前后处理命令以及 ICEM IPC 行为。
+测试会核对 README、79 个注册工具、3 个资源、bridge 版本、脚本安全写入、CFX 前后处理命令以及 ICEM IPC 行为。
 
 ## License
 
@@ -226,14 +248,20 @@ MCP 客户端不可用时，可在仓库根目录运行 `.\.venv\Scripts\python.
 
 ## 本版更新
 
-### 新增
+### 0.6.0
+
+新增本地混合检索、原生模型检查与编辑、快照恢复、可重试工作流和物理验收，更新了 12 个专业技能。 [使用与验收说明](docs/workflows-and-knowledge.md)
+
+### 0.5.0
+
+#### 新增
 
 - 新增 12 个 ANSYS Skill，覆盖几何、网格、仿真、验证与后处理等环节。
 - 新增 `generate_ansys_mesh`，从几何创建独立 Mesh 工程，设置网格控制，导出 `.meshdat` 并重开核对统计。
 - 新增后台任务提交、查询与停止，增加日志诊断、CSV 数值验收和独立 System Coupling 批处理。MCP 工具从 50 个增至 57 个。
 - 新增结构、动力学、热、网格、Fluent、CFX 和耦合的可复跑算例及验收记录。
 
-### 修改与修复
+#### 修改与修复
 
 - 加强批处理产物检查，零字节输出会被判为失败。停止后台任务时同步终止所属 Windows 作业进程。
 - 修正 Fluent 批处理云图导出、Mechanical 节点 CSV 导出及重开后图片刷新。

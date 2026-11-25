@@ -59,7 +59,7 @@ def verify(path, criteria):
 
 
 RULES = [
-    ("license", r"license checkout failed|licensing error|no valid licen[cs]e|licensed number of users already reached|cannot connect to license server", "Check feature availability and license server connectivity."),
+    ("license", r"unexpected license problem|ansysli exited or could not read server port|license checkout failed|licensing error|no valid licen[cs]e|licensed number of users already reached|cannot connect to license server", "Check feature availability and license server connectivity."),
     ("mesh", r"negative (?:cell )?volume|highly distorted|excessive element distortion", "Inspect affected cells/elements and the last valid geometry."),
     ("constraint", r"zero pivot|small equation solver pivot|singular matrix", "Check material stiffness, constraints and contact status."),
     ("convergence", r"floating point exception|divergence detected|did not converge|not converged|convergence failure", "Inspect load step, residual history and monitored quantities."),

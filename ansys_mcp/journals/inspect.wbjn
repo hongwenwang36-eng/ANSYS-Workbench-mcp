@@ -1,0 +1,45 @@
+# encoding: utf-8
+import json
+import traceback
+cfg = __CONFIG__
+try:
+    Open(FilePath=cfg["file"])
+    systems = GetAllSystems()
+    state = {"kind":"workbench", "systems":[], "parameters":{}}
+    for s in systems:
+        components = []
+        for name in ["Engineering Data","Geometry","Mesh","Model","Setup","Solution","Results"]:
+            try:
+                s.GetComponent(Name=name)
+                components.append(name)
+            except Exception:
+                pass
+        state["systems"].append({"name":s.Name, "display":s.DisplayText,"components":components})
+    edit = cfg["edit"]
+    if edit and edit["field"] == "parameter":
+        Parameters.GetParameter(Name=edit["target"]).Expression = str(edit["value"])
+    for p in Parameters.GetAllParameters():
+        state["parameters"][str(p.Name)] = {"name":unicode(p.DisplayText), "value":unicode(Parameters.GetDesignPoint(Name="0").GetParameterValue(Parameter=p))}
+    if cfg["system"]:
+        system = GetSystem(Name=cfg["system"])
+        if edit and edit["field"]=="geometry_file":
+            system.GetContainer(ComponentName="Geometry").SetFile(FilePath=edit["value"])
+            system.GetComponent(Name="Model").Refresh()
+        model = system.GetContainer(ComponentName="Model")
+        model.Edit(Interactive=False)
+        try:
+            model.SendCommand(Language="Python", Command=cfg["mechanical"])
+            with open(cfg["detail"]) as f:
+                state["mechanical"] = json.load(f)
+            if "error" in state["mechanical"]:
+                raise RuntimeError(state["mechanical"]["error"])
+        finally:
+            model.Exit()
+    if edit:
+        Save(Overwrite=True)
+    with open(cfg["output"],"w") as f:
+        json.dump(state,f)
+except:
+    with open(cfg["output"]+".error","w") as f:
+        f.write(traceback.format_exc())
+    raise
